@@ -1,6 +1,6 @@
 """Tests for whether the create_pr phase reuses the spec PR (gh/git are not launched).
 
-Line 1 (prpilot-spec) creates a draft spec PR first, so running `gh pr create` on
+Line 1 (ghswarm-spec) creates a draft spec PR first, so running `gh pr create` on
 implementation completion would fail with "PR already exists". This guarantees the existing PR can be reused.
 """
 
@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from prpilot import state as st
-from prpilot.config import AgentConfig, RepoConfig
-from prpilot.github import Issue
-from prpilot.orchestrator import Orchestrator
+from ghswarm import state as st
+from ghswarm.config import AgentConfig, RepoConfig
+from ghswarm.github import Issue
+from ghswarm.orchestrator import Orchestrator
 
 
 class FakeGitHub:

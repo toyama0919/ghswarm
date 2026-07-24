@@ -8,9 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import prpilot.cli as cli
-from prpilot import activity
-from prpilot.cli import (
+import ghswarm.cli as cli
+from ghswarm import activity
+from ghswarm.cli import (
     _build_issue_create_args,
     _phase_kind,
     _process_cycle,
@@ -21,7 +21,7 @@ from prpilot.cli import (
     _select_single_repo_by_cwd,
     _target_issues,
 )
-from prpilot.config import (
+from ghswarm.config import (
     AgentConfig,
     AppConfig,
     ConfigError,
@@ -29,8 +29,8 @@ from prpilot.config import (
     RepoConfig,
     TargetFilter,
 )
-from prpilot.github import GitHubError, Issue
-from prpilot.orchestrator import StepResult
+from ghswarm.github import GitHubError, Issue
+from ghswarm.orchestrator import StepResult
 
 
 class FakeGitHub:
@@ -91,7 +91,7 @@ class SequenceOrch:
 
 
 def _issue(number: int, next_action: str, *, labels: list[str] | None = None) -> Issue:
-    body = f'body\n\n<!-- PRPILOT_STATE_START\n{{"next_action": "{next_action}"}}\nPRPILOT_STATE_END -->'
+    body = f'body\n\n<!-- GHSWARM_STATE_START\n{{"next_action": "{next_action}"}}\nGHSWARM_STATE_END -->'
     issue_labels = labels if labels is not None else ["status: idle"]
     return Issue(number=number, title=f"issue {number}", body=body, labels=issue_labels)
 
@@ -796,7 +796,7 @@ def test_cmd_loop_uses_min_poll_interval(monkeypatch):
 
 def test_cmd_loop_stop_ctrl_c_shows_background_message(monkeypatch, tmp_path, capsys):
     app = _multi_app()
-    app.daemon_pid = str(tmp_path / "prpilot.pid")
+    app.daemon_pid = str(tmp_path / "ghswarm.pid")
 
     def fake_wait(*_args, **_kwargs):
         raise KeyboardInterrupt
@@ -814,7 +814,7 @@ def test_cmd_loop_stop_ctrl_c_shows_background_message(monkeypatch, tmp_path, ca
 
 
 def test_cmd_loop_stop_waits_until_daemon_gone(monkeypatch, tmp_path, capsys):
-    pid_path = tmp_path / "prpilot.pid"
+    pid_path = tmp_path / "ghswarm.pid"
     pid_path.write_text("4242", encoding="utf-8")
     app = _multi_app()
     app.daemon_pid = str(pid_path)
@@ -852,11 +852,11 @@ def test_cmd_loop_stop_waits_until_daemon_gone(monkeypatch, tmp_path, capsys):
     assert rc == 0
     assert stop_calls == [str(pid_path)]
     assert sleep_calls == [0.5, 0.5]
-    assert "✔ prpilot daemon stopped (pid=4242)" in capsys.readouterr().out
+    assert "✔ ghswarm daemon stopped (pid=4242)" in capsys.readouterr().out
 
 
 def test_cmd_loop_stop_shows_running_repos(monkeypatch, tmp_path, capsys):
-    pid_path = tmp_path / "prpilot.pid"
+    pid_path = tmp_path / "ghswarm.pid"
     pid_path.write_text("4242", encoding="utf-8")
     app = _multi_app()
     app.daemon_pid = str(pid_path)
@@ -871,7 +871,7 @@ def test_cmd_loop_stop_shows_running_repos(monkeypatch, tmp_path, capsys):
     def fake_read(_activity_dir, *, daemon_pid=None, is_alive_fn=None):
         return [
             activity.ActivityEntry(
-                repo="toyama0919/prpilot",
+                repo="toyama0919/ghswarm",
                 issue=58,
                 phase="ai_review",
                 since="",
@@ -898,10 +898,10 @@ def test_cmd_loop_stop_shows_running_repos(monkeypatch, tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "Waiting for in-flight commands" in out
-    assert "toyama0919/prpilot" in out
+    assert "toyama0919/ghswarm" in out
     assert "#58" in out
     assert "ai_review" in out
-    assert "✔ prpilot daemon stopped (pid=4242)" in out
+    assert "✔ ghswarm daemon stopped (pid=4242)" in out
 
 
 def test_cmd_loop_stop_no_daemon(monkeypatch, tmp_path):
@@ -946,7 +946,7 @@ def test_cmd_loop_daemon_and_stop_error(monkeypatch):
 
 
 def test_cmd_loop_daemon_graceful_stop(monkeypatch, tmp_path):
-    pid_path = tmp_path / "prpilot.pid"
+    pid_path = tmp_path / "ghswarm.pid"
     app = _multi_app()
     app.daemon_pid = str(pid_path)
     remove_calls: list[str] = []
@@ -979,7 +979,7 @@ def test_cmd_loop_daemon_graceful_stop(monkeypatch, tmp_path):
 
 
 def test_cmd_loop_restart_stops_then_starts_daemon(monkeypatch, tmp_path):
-    pid_path = tmp_path / "prpilot.pid"
+    pid_path = tmp_path / "ghswarm.pid"
     pid_path.write_text("4242", encoding="utf-8")
     app = _multi_app()
     app.daemon_pid = str(pid_path)
@@ -1064,7 +1064,7 @@ def test_cmd_loop_restart_start_when_no_daemon(monkeypatch, tmp_path):
 
 def test_cmd_loop_restart_ctrl_c_returns_130(monkeypatch, tmp_path):
     app = _multi_app()
-    app.daemon_pid = str(tmp_path / "prpilot.pid")
+    app.daemon_pid = str(tmp_path / "ghswarm.pid")
     daemonize_calls: list[int] = []
 
     def fake_sleep(_interval: float) -> None:
@@ -1335,8 +1335,8 @@ def test_config_help_shows_repo():
 def _seed_events(db_path, rows):
     from datetime import datetime
 
-    from prpilot.events import EventLog
-    from prpilot.orchestrator import StepResult
+    from ghswarm.events import EventLog
+    from ghswarm.orchestrator import StepResult
 
     el = EventLog(str(db_path))
     for repo, issue, action, detail, ts in rows:

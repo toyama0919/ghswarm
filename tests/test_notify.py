@@ -6,13 +6,13 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from prpilot import state as st
-from prpilot.config import AgentConfig, RepoConfig, NotifyConfig
-from prpilot.events import EventLog
-from prpilot.executor import ExecResult
-from prpilot.github import Issue, PRStatus
-from prpilot.notify import Notifier, _format_completed_message, _format_message
-from prpilot.orchestrator import Orchestrator
+from ghswarm import state as st
+from ghswarm.config import AgentConfig, RepoConfig, NotifyConfig
+from ghswarm.events import EventLog
+from ghswarm.executor import ExecResult
+from ghswarm.github import Issue, PRStatus
+from ghswarm.notify import Notifier, _format_completed_message, _format_message
+from ghswarm.orchestrator import Orchestrator
 
 
 class FakeGitHub:
@@ -27,7 +27,7 @@ class FakeGitHub:
             title="add blocked notification",
             body=self.body,
             labels=[],
-            url="https://github.com/toyama0919/prpilot/issues/42",
+            url="https://github.com/toyama0919/ghswarm/issues/42",
         )
 
     def set_body(self, number: int, body: str) -> None:
@@ -83,9 +83,9 @@ def _notify_config(**kwargs) -> NotifyConfig:
 
 
 def _orch_with_notify(monkeypatch, *, notify: NotifyConfig | None = None) -> Orchestrator:
-    monkeypatch.setattr("prpilot.orchestrator.lbl.acquire", lambda *a, **k: None)
+    monkeypatch.setattr("ghswarm.orchestrator.lbl.acquire", lambda *a, **k: None)
     monkeypatch.setattr(
-        "prpilot.orchestrator.execute_with_self_healing",
+        "ghswarm.orchestrator.execute_with_self_healing",
         lambda *a, **k: ExecResult(ok=False, output="fail", attempts=1, reason="verify_failed"),
     )
 
@@ -99,7 +99,7 @@ def _orch_with_notify(monkeypatch, *, notify: NotifyConfig | None = None) -> Orc
     orch = Orchestrator.__new__(Orchestrator)
     orch.cfg = cfg
     orch.cwd = "/tmp"
-    orch.repo_name = "toyama0919/prpilot"
+    orch.repo_name = "toyama0919/ghswarm"
     orch.gh = FakeGitHub()
     orch.git = FakeGit()
     orch._git_for = lambda path: FakeWorktreeGit()
@@ -117,7 +117,7 @@ def _orch_with_notify(monkeypatch, *, notify: NotifyConfig | None = None) -> Orc
 def test_notifier_disabled_is_noop():
     notifier = Notifier.disabled()
     issue = Issue(number=1, title="t", body="", url="https://github.com/o/r/issues/1")
-    with patch("prpilot.notify.urllib.request.urlopen") as urlopen:
+    with patch("ghswarm.notify.urllib.request.urlopen") as urlopen:
         notifier.notify_blocked(issue, "ci_failed", "detail", "o/r")
         urlopen.assert_not_called()
 
@@ -127,19 +127,19 @@ def test_format_message_includes_reason_and_url():
         number=42,
         title="Title",
         body="",
-        url="https://github.com/toyama0919/prpilot/issues/42",
+        url="https://github.com/toyama0919/ghswarm/issues/42",
     )
     slack, macos = _format_message(
-        "toyama0919/prpilot", issue, "implement_failed", "verify failed 3 times"
+        "toyama0919/ghswarm", issue, "implement_failed", "verify failed 3 times"
     )
-    assert "toyama0919/prpilot #42" in slack
+    assert "toyama0919/ghswarm #42" in slack
     assert '"Title"' in slack
     assert "implement_failed: verify failed 3 times" in slack
-    assert "https://github.com/toyama0919/prpilot/issues/42" in slack
+    assert "https://github.com/toyama0919/ghswarm/issues/42" in slack
     assert "implement_failed: verify failed 3 times" in macos
 
 
-@patch("prpilot.notify.urllib.request.urlopen")
+@patch("ghswarm.notify.urllib.request.urlopen")
 def test_slack_post_includes_mention_at_start(urlopen):
     urlopen.return_value = MagicMock(read=lambda: b"ok")
     issue = Issue(number=42, title="Title", body="", url="https://github.com/o/r/issues/42")
@@ -149,7 +149,7 @@ def test_slack_post_includes_mention_at_start(urlopen):
 
     req = urlopen.call_args[0][0]
     payload = json.loads(req.data.decode("utf-8"))
-    assert payload["text"].startswith("<!here> [prpilot]")
+    assert payload["text"].startswith("<!here> [ghswarm]")
 
 
 BODY = """## Task breakdown
@@ -160,7 +160,7 @@ BODY = """## Task breakdown
 SPEC_PATH = ".specs/test-spec.md"
 
 
-@patch("prpilot.notify.urllib.request.urlopen")
+@patch("ghswarm.notify.urllib.request.urlopen")
 def test_implement_failed_triggers_slack_post(urlopen, monkeypatch, tmp_path):
     urlopen.return_value = MagicMock(read=lambda: b"ok")
     spec_file = tmp_path / SPEC_PATH
@@ -185,7 +185,7 @@ def test_implement_failed_triggers_slack_post(urlopen, monkeypatch, tmp_path):
     assert "implement_failed" in payload["text"]
 
 
-@patch("prpilot.notify.urllib.request.urlopen")
+@patch("ghswarm.notify.urllib.request.urlopen")
 def test_ci_failed_without_auto_fix_triggers_slack_post(urlopen):
     urlopen.return_value = MagicMock(read=lambda: b"ok")
     orch = Orchestrator.__new__(Orchestrator)
@@ -195,7 +195,7 @@ def test_ci_failed_without_auto_fix_triggers_slack_post(urlopen):
         notify=_notify_config(),
     )
     orch.cwd = "/tmp"
-    orch.repo_name = "toyama0919/prpilot"
+    orch.repo_name = "toyama0919/ghswarm"
     status = PRStatus(
         number=9,
         state="OPEN",
@@ -225,7 +225,7 @@ def test_ci_failed_without_auto_fix_triggers_slack_post(urlopen):
     assert "ci_failed" in payload["text"]
 
 
-@patch("prpilot.notify.urllib.request.urlopen")
+@patch("ghswarm.notify.urllib.request.urlopen")
 def test_same_reason_blocked_only_notifies_once(urlopen):
     urlopen.return_value = MagicMock(read=lambda: b"ok")
     orch = Orchestrator.__new__(Orchestrator)
@@ -234,7 +234,7 @@ def test_same_reason_blocked_only_notifies_once(urlopen):
         notify=_notify_config(),
     )
     orch.cwd = "/tmp"
-    orch.repo_name = "toyama0919/prpilot"
+    orch.repo_name = "toyama0919/ghswarm"
     orch.gh = FakeGitHub()
     orch.agent_names = ["implement"]
     orch._notifier = Notifier.from_config(orch.cfg.notify)
@@ -249,7 +249,7 @@ def test_same_reason_blocked_only_notifies_once(urlopen):
     assert urlopen.call_count == 1
 
 
-@patch("prpilot.notify.urllib.request.urlopen")
+@patch("ghswarm.notify.urllib.request.urlopen")
 def test_resume_from_blocked_clears_dedup_and_renotifies(urlopen):
     urlopen.return_value = MagicMock(read=lambda: b"ok")
     captured: dict[str, str | None] = {}
@@ -271,7 +271,7 @@ def test_resume_from_blocked_clears_dedup_and_renotifies(urlopen):
         notify=_notify_config(),
     )
     orch.cwd = "/tmp"
-    orch.repo_name = "toyama0919/prpilot"
+    orch.repo_name = "toyama0919/ghswarm"
     state = st.IssueState(
         branch_name="issue-7",
         pr_number=9,
@@ -287,7 +287,7 @@ def test_resume_from_blocked_clears_dedup_and_renotifies(urlopen):
     def intercept_wait_ci(issue, state):
         captured["last_notified_reason"] = state.last_notified_reason
         orch._enter_blocked(issue, state, "ci_failed", "again")
-        from prpilot.orchestrator import StepResult
+        from ghswarm.orchestrator import StepResult
 
         return StepResult(issue.number, "failed", "ci_failed")
 
@@ -299,7 +299,7 @@ def test_resume_from_blocked_clears_dedup_and_renotifies(urlopen):
     assert urlopen.call_count == 1
 
 
-@patch("prpilot.notify.urllib.request.urlopen")
+@patch("ghswarm.notify.urllib.request.urlopen")
 def test_reblocked_after_idle_notifies_again(urlopen):
     urlopen.return_value = MagicMock(read=lambda: b"ok")
     orch = Orchestrator.__new__(Orchestrator)
@@ -308,7 +308,7 @@ def test_reblocked_after_idle_notifies_again(urlopen):
         notify=_notify_config(),
     )
     orch.cwd = "/tmp"
-    orch.repo_name = "toyama0919/prpilot"
+    orch.repo_name = "toyama0919/ghswarm"
     orch.gh = FakeGitHub()
     orch.agent_names = ["implement"]
     orch._notifier = Notifier.from_config(orch.cfg.notify)
@@ -324,7 +324,7 @@ def test_reblocked_after_idle_notifies_again(urlopen):
     assert urlopen.call_count == 2
 
 
-@patch("prpilot.notify.urllib.request.urlopen")
+@patch("ghswarm.notify.urllib.request.urlopen")
 def test_slack_failure_does_not_raise(urlopen):
     import urllib.error
 
@@ -336,9 +336,9 @@ def test_slack_failure_does_not_raise(urlopen):
 
 
 def test_notify_config_defaults_when_unset(tmp_path):
-    from prpilot.config import load_config
+    from ghswarm.config import load_config
 
-    path = tmp_path / "prpilot.yaml"
+    path = tmp_path / "ghswarm.yaml"
     path.write_text(
         """
 repositories:
@@ -374,36 +374,36 @@ def test_format_completed_message_includes_pr_and_url():
         number=42,
         title="Title",
         body="",
-        url="https://github.com/toyama0919/prpilot/issues/42",
+        url="https://github.com/toyama0919/ghswarm/issues/42",
     )
-    slack, macos = _format_completed_message("toyama0919/prpilot", issue, 99)
-    assert "toyama0919/prpilot #42" in slack
+    slack, macos = _format_completed_message("toyama0919/ghswarm", issue, 99)
+    assert "toyama0919/ghswarm #42" in slack
     assert '"Title"' in slack
     assert "is complete (PR #99 merged)" in slack
-    assert "https://github.com/toyama0919/prpilot/issues/42" in slack
+    assert "https://github.com/toyama0919/ghswarm/issues/42" in slack
     assert "is complete (PR #99 merged)" in macos
     assert "blocked" not in slack
 
 
-@patch("prpilot.notify.platform.system", return_value="Darwin")
-@patch("prpilot.notify.subprocess.run")
-@patch("prpilot.notify.urllib.request.urlopen")
+@patch("ghswarm.notify.platform.system", return_value="Darwin")
+@patch("ghswarm.notify.subprocess.run")
+@patch("ghswarm.notify.urllib.request.urlopen")
 def test_notify_completed_sends_to_both_channels(urlopen, subprocess_run, _darwin):
     urlopen.return_value = MagicMock(read=lambda: b"ok")
     issue = Issue(
         number=42,
         title="Title",
         body="",
-        url="https://github.com/toyama0919/prpilot/issues/42",
+        url="https://github.com/toyama0919/ghswarm/issues/42",
     )
     notifier = Notifier.from_config(_notify_config(macos=True))
 
-    notifier.notify_completed(issue, 99, "toyama0919/prpilot")
+    notifier.notify_completed(issue, 99, "toyama0919/ghswarm")
 
     assert urlopen.call_count == 1
     payload = json.loads(urlopen.call_args[0][0].data.decode("utf-8"))
     assert "is complete (PR #99 merged)" in payload["text"]
-    assert "https://github.com/toyama0919/prpilot/issues/42" in payload["text"]
+    assert "https://github.com/toyama0919/ghswarm/issues/42" in payload["text"]
     assert subprocess_run.call_count == 1
     script = subprocess_run.call_args[0][0]
     assert "is complete (PR #99 merged)" in script[2]
@@ -412,13 +412,13 @@ def test_notify_completed_sends_to_both_channels(urlopen, subprocess_run, _darwi
 def test_notify_completed_disabled_channels_is_noop():
     notifier = Notifier.disabled()
     issue = Issue(number=1, title="t", body="", url="https://github.com/o/r/issues/1")
-    with patch("prpilot.notify.urllib.request.urlopen") as urlopen:
+    with patch("ghswarm.notify.urllib.request.urlopen") as urlopen:
         notifier.notify_completed(issue, 9, "o/r")
         urlopen.assert_not_called()
 
 
-@patch("prpilot.orchestrator.lbl.release")
-@patch("prpilot.notify.urllib.request.urlopen")
+@patch("ghswarm.orchestrator.lbl.release")
+@patch("ghswarm.notify.urllib.request.urlopen")
 def test_finalize_merged_sends_completion_notification(urlopen, release):
     urlopen.return_value = MagicMock(read=lambda: b"ok")
     orch = Orchestrator.__new__(Orchestrator)
@@ -427,7 +427,7 @@ def test_finalize_merged_sends_completion_notification(urlopen, release):
         notify=_notify_config(on_completed=True),
     )
     orch.cwd = "/tmp"
-    orch.repo_name = "toyama0919/prpilot"
+    orch.repo_name = "toyama0919/ghswarm"
     orch.worktree_dir = Path("/tmp/worktrees")
     orch.gh = FakeGitHub()
     orch.git = MagicMock()
@@ -439,7 +439,7 @@ def test_finalize_merged_sends_completion_notification(urlopen, release):
     state = st.IssueState(
         branch_name="issue-42",
         pr_number=99,
-        pr_url="https://github.com/toyama0919/prpilot/pull/99",
+        pr_url="https://github.com/toyama0919/ghswarm/pull/99",
     )
 
     result = orch._finalize_merged(issue, state)
@@ -450,8 +450,8 @@ def test_finalize_merged_sends_completion_notification(urlopen, release):
     assert "is complete (PR #99 merged)" in payload["text"]
 
 
-@patch("prpilot.orchestrator.lbl.release")
-@patch("prpilot.notify.urllib.request.urlopen")
+@patch("ghswarm.orchestrator.lbl.release")
+@patch("ghswarm.notify.urllib.request.urlopen")
 def test_finalize_merged_skips_notification_when_on_completed_false(urlopen, release):
     urlopen.return_value = MagicMock(read=lambda: b"ok")
     orch = Orchestrator.__new__(Orchestrator)
@@ -460,7 +460,7 @@ def test_finalize_merged_skips_notification_when_on_completed_false(urlopen, rel
         notify=_notify_config(on_completed=False),
     )
     orch.cwd = "/tmp"
-    orch.repo_name = "toyama0919/prpilot"
+    orch.repo_name = "toyama0919/ghswarm"
     orch.worktree_dir = Path("/tmp/worktrees")
     orch.gh = FakeGitHub()
     orch.git = MagicMock()
@@ -472,7 +472,7 @@ def test_finalize_merged_skips_notification_when_on_completed_false(urlopen, rel
     state = st.IssueState(
         branch_name="issue-42",
         pr_number=99,
-        pr_url="https://github.com/toyama0919/prpilot/pull/99",
+        pr_url="https://github.com/toyama0919/ghswarm/pull/99",
     )
 
     orch._finalize_merged(issue, state)

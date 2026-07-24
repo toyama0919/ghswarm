@@ -5,11 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from prpilot import state as st
-from prpilot.config import AgentConfig, RepoConfig, LabelConfig
-from prpilot.events import EventLog
-from prpilot.github import Issue
-from prpilot.orchestrator import Orchestrator
+from ghswarm import state as st
+from ghswarm.config import AgentConfig, RepoConfig, LabelConfig
+from ghswarm.events import EventLog
+from ghswarm.github import Issue
+from ghswarm.orchestrator import Orchestrator
 
 HOST = "orch-host"
 NOW = datetime(2026, 7, 17, 12, 0, 0, tzinfo=timezone.utc)
@@ -80,8 +80,8 @@ def _body_with_state(state: st.IssueState) -> str:
 
 
 def _orchestrator(monkeypatch, gh: FakeGitHub):
-    monkeypatch.setattr("prpilot.orchestrator.execute_with_self_healing", lambda *a, **k: Result())
-    monkeypatch.setattr("prpilot.labels.current_host", lambda: HOST)
+    monkeypatch.setattr("ghswarm.orchestrator.execute_with_self_healing", lambda *a, **k: Result())
+    monkeypatch.setattr("ghswarm.labels.current_host", lambda: HOST)
 
     orch = Orchestrator.__new__(Orchestrator)
     orch.cfg = RepoConfig(
@@ -115,7 +115,7 @@ def test_process_reclaims_stale_busy_and_continues(monkeypatch):
         busy_since=(NOW - timedelta(seconds=30)).isoformat(),
     )
     gh = FakeGitHub(_body_with_state(state), ["status: busy-implement"])
-    monkeypatch.setattr("prpilot.labels.pid_alive", lambda pid: False)
+    monkeypatch.setattr("ghswarm.labels.pid_alive", lambda pid: False)
     orch = _orchestrator(monkeypatch, gh)
 
     result = orch.process(5)
@@ -134,7 +134,7 @@ def test_process_skips_alive_busy_lock(monkeypatch):
         busy_since=(datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat(),
     )
     gh = FakeGitHub(_body_with_state(state), ["status: busy-implement"])
-    monkeypatch.setattr("prpilot.labels.pid_alive", lambda pid: True)
+    monkeypatch.setattr("ghswarm.labels.pid_alive", lambda pid: True)
     orch = _orchestrator(monkeypatch, gh)
 
     result = orch.process(6)
@@ -154,7 +154,7 @@ def test_process_reclaims_stale_busy_before_clarification_skip(monkeypatch):
         busy_since=(NOW - timedelta(seconds=30)).isoformat(),
     )
     gh = FakeGitHub(_body_with_state(state), ["status: busy-implement"])
-    monkeypatch.setattr("prpilot.labels.pid_alive", lambda pid: False)
+    monkeypatch.setattr("ghswarm.labels.pid_alive", lambda pid: False)
     orch = _orchestrator(monkeypatch, gh)
 
     result = orch.process(7)

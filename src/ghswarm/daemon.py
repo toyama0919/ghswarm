@@ -103,7 +103,7 @@ def daemonize(log_path: str, pid_path: str) -> None:
         os.close(read_fd)
         if data:
             daemon_pid = int(data.decode().strip())
-            print(f"prpilot daemon started (pid={daemon_pid}, log={log_path})", flush=True)
+            print(f"ghswarm daemon started (pid={daemon_pid}, log={log_path})", flush=True)
         os._exit(0)
 
     os.close(read_fd)

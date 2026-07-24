@@ -19,7 +19,7 @@ from .git_ops import Git
 from .logging_utils import get_logger
 from .sandbox import LocalRunner, ShellRunner, make_runner
 
-log = get_logger("prpilot.exec")
+log = get_logger("ghswarm.exec")
 
 
 def is_transient(output: str, patterns: list[str]) -> bool:
@@ -242,7 +242,7 @@ def resolve_conflict_with_agent(
         f"The files below have merge conflicts. Integrate them while preserving the "
         f"intent of both sides of the change, and leave verify passing. Do not leave any "
         f"conflict markers (<<<<<<< / ======= / >>>>>>>). Do not commit "
-        f"(prpilot will do that).\n"
+        f"(ghswarm will do that).\n"
         f"--- conflicting files ---\n"
         + "\n".join(conflict_files)
         + "\n--- /conflicting files ---\n"
@@ -288,7 +288,7 @@ def fix_ci_with_agent(
     prompt = (
         f"{prompt_header}\n"
         f"Below is the failing CI (GitHub Actions) log for the PR. Identify the root cause, "
-        f"fix it, and leave verify passing. Do not commit (prpilot will do that).\n"
+        f"fix it, and leave verify passing. Do not commit (ghswarm will do that).\n"
         f"--- CI failure log ---\n{logs_block}\n--- /CI failure log ---\n"
     )
 

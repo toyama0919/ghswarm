@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "prpilot"
+name = "ghswarm"
 version = "0.1.0"
 description = "A spec-driven development PM agent that orchestrates multiple coding CLIs using GitHub Issues as state"
 readme = "README.md"
@@ -18,9 +18,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/toyama0919/prpilot"
-Repository = "https://github.com/toyama0919/prpilot"
-Issues = "https://github.com/toyama0919/prpilot/issues"
+Homepage = "https://github.com/toyama0919/ghswarm"
+Repository = "https://github.com/toyama0919/ghswarm"
+Issues = "https://github.com/toyama0919/ghswarm/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -29,13 +29,13 @@ dev = [
 ]
 
 [project.scripts]
-prpilot = "prpilot.cli:main"
+ghswarm = "ghswarm.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-prpilot = ["config.example.yaml"]
+ghswarm = ["config.example.yaml"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

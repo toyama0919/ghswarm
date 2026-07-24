@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import subprocess
 
-import prpilot.github as github
-from prpilot.github import GitHub, PRStatus, _run_gh
+import ghswarm.github as github
+from ghswarm.github import GitHub, PRStatus, _run_gh
 
 
 def _payload(**overrides) -> dict:

@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from prpilot import daemon
+from ghswarm import daemon
 
 
 def test_read_pid_missing(tmp_path):
@@ -46,14 +46,14 @@ def test_is_alive_true_on_permission_error():
 def test_already_running_stale(tmp_path):
     pid_path = tmp_path / "stale.pid"
     pid_path.write_text("99999", encoding="utf-8")
-    with patch("prpilot.daemon.is_alive", return_value=False):
+    with patch("ghswarm.daemon.is_alive", return_value=False):
         assert daemon.already_running(str(pid_path)) is None
 
 
 def test_already_running_alive(tmp_path):
     pid_path = tmp_path / "live.pid"
     pid_path.write_text("4242", encoding="utf-8")
-    with patch("prpilot.daemon.is_alive", return_value=True):
+    with patch("ghswarm.daemon.is_alive", return_value=True):
         assert daemon.already_running(str(pid_path)) == 4242
 
 
@@ -61,8 +61,8 @@ def test_stop_daemon_sends_sigterm_and_keeps_pid_file(tmp_path):
     pid_path = tmp_path / "live.pid"
     pid_path.write_text("4242", encoding="utf-8")
     with (
-        patch("prpilot.daemon.read_pid", return_value=4242),
-        patch("prpilot.daemon.is_alive", return_value=True),
+        patch("ghswarm.daemon.read_pid", return_value=4242),
+        patch("ghswarm.daemon.is_alive", return_value=True),
         patch("os.kill") as kill,
     ):
         assert daemon.stop_daemon(str(pid_path)) is True
@@ -74,8 +74,8 @@ def test_stop_daemon_removes_stale_pid_file(tmp_path):
     pid_path = tmp_path / "stale.pid"
     pid_path.write_text("99999", encoding="utf-8")
     with (
-        patch("prpilot.daemon.read_pid", return_value=99999),
-        patch("prpilot.daemon.is_alive", return_value=False),
+        patch("ghswarm.daemon.read_pid", return_value=99999),
+        patch("ghswarm.daemon.is_alive", return_value=False),
     ):
         assert daemon.stop_daemon(str(pid_path)) is False
     assert not pid_path.exists()
@@ -95,14 +95,14 @@ def test_remove_pid_idempotent(tmp_path):
 
 
 def test_dated_log_path_with_extension():
-    assert daemon.dated_log_path("/home/user/.prpilot/prpilot.log", "2026-07-18") == (
-        "/home/user/.prpilot/prpilot-2026-07-18.log"
+    assert daemon.dated_log_path("/home/user/.ghswarm/ghswarm.log", "2026-07-18") == (
+        "/home/user/.ghswarm/ghswarm-2026-07-18.log"
     )
 
 
 def test_dated_log_path_without_extension():
-    assert daemon.dated_log_path("/home/user/.prpilot/prpilot", "2026-07-18") == (
-        "/home/user/.prpilot/prpilot-2026-07-18.log"
+    assert daemon.dated_log_path("/home/user/.ghswarm/ghswarm", "2026-07-18") == (
+        "/home/user/.ghswarm/ghswarm-2026-07-18.log"
     )
 
 
@@ -125,7 +125,7 @@ def test_daemonize_prints_grandchild_pid(tmp_path):
 
     code = f"""
 import os
-from prpilot import daemon
+from ghswarm import daemon
 daemon.daemonize({log_path!r}, {pid_path!r})
 os._exit(0)
 """
@@ -137,7 +137,7 @@ os._exit(0)
     )
     assert result.returncode == 0, result.stderr
     match = re.search(
-        rf"prpilot daemon started \(pid=(\d+), log={re.escape(log_path)}\)",
+        rf"ghswarm daemon started \(pid=(\d+), log={re.escape(log_path)}\)",
         result.stdout,
     )
     assert match

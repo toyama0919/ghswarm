@@ -6,8 +6,8 @@ import subprocess
 
 import pytest
 
-from prpilot.config import SandboxConfig
-from prpilot.sandbox import (
+from ghswarm.config import SandboxConfig
+from ghswarm.sandbox import (
     DockerRunner,
     DockerUnavailableError,
     LocalRunner,
@@ -30,7 +30,7 @@ def test_make_runner_none_returns_local_runner():
 
 
 def test_make_runner_docker_returns_docker_runner(monkeypatch):
-    monkeypatch.setattr("prpilot.sandbox.ensure_docker_available", lambda: None)
+    monkeypatch.setattr("ghswarm.sandbox.ensure_docker_available", lambda: None)
     runner = make_runner(SandboxConfig(driver="docker", image="python:3.12"))
     assert isinstance(runner, DockerRunner)
 
@@ -41,7 +41,7 @@ def test_make_runner_docker_checks_availability(monkeypatch):
     def _check():
         called["n"] += 1
 
-    monkeypatch.setattr("prpilot.sandbox.ensure_docker_available", _check)
+    monkeypatch.setattr("ghswarm.sandbox.ensure_docker_available", _check)
     make_runner(SandboxConfig(driver="docker", image="python:3.12"))
     make_runner(SandboxConfig(driver="docker", image="python:3.12"))
     assert called["n"] == 2
@@ -86,8 +86,8 @@ def test_local_runner_executes_command(tmp_path):
 
 
 def test_docker_runner_builds_expected_args(monkeypatch, tmp_path):
-    monkeypatch.setattr("prpilot.sandbox.os.getuid", lambda: 1000)
-    monkeypatch.setattr("prpilot.sandbox.os.getgid", lambda: 1001)
+    monkeypatch.setattr("ghswarm.sandbox.os.getuid", lambda: 1000)
+    monkeypatch.setattr("ghswarm.sandbox.os.getgid", lambda: 1001)
     monkeypatch.setenv("GH_TOKEN", "secret")
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
@@ -96,7 +96,7 @@ def test_docker_runner_builds_expected_args(monkeypatch, tmp_path):
     git_common = tmp_path / "repo.git"
     git_common.mkdir()
 
-    monkeypatch.setattr("prpilot.sandbox._resolve_git_common_dir", lambda cwd_arg: str(git_common))
+    monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd_arg: str(git_common))
 
     sandbox = SandboxConfig(
         driver="docker",
@@ -105,7 +105,7 @@ def test_docker_runner_builds_expected_args(monkeypatch, tmp_path):
         user="auto",
         env={"npm_config_cache": "/cache/npm"},
         env_passthrough=["GH_TOKEN", "GITHUB_TOKEN"],
-        volumes=["prpilot-cache:/cache"],
+        volumes=["ghswarm-cache:/cache"],
     )
     runner = DockerRunner(sandbox)
     args, name = runner._build_run_command("npm test", str(cwd))
@@ -123,9 +123,9 @@ def test_docker_runner_builds_expected_args(monkeypatch, tmp_path):
     assert "npm_config_cache=/cache/npm" in args
     assert "GH_TOKEN" in args
     assert "GITHUB_TOKEN" not in args
-    assert "prpilot-cache:/cache" in args
+    assert "ghswarm-cache:/cache" in args
     assert args[-4:] == ["node:22-bookworm", "sh", "-c", "npm test"]
-    assert name.startswith("prpilot-sbx-")
+    assert name.startswith("ghswarm-sbx-")
 
 
 def test_docker_runner_injects_git_safe_directory_env(monkeypatch, tmp_path):
@@ -133,7 +133,7 @@ def test_docker_runner_injects_git_safe_directory_env(monkeypatch, tmp_path):
 
     Real in-container git behavior depends on the runtime environment, so here we only verify argument construction.
     """
-    monkeypatch.setattr("prpilot.sandbox._resolve_git_common_dir", lambda cwd: None)
+    monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
     runner = DockerRunner(SandboxConfig(driver="docker", image="alpine"))
     args, _ = runner._build_run_command("true", str(tmp_path))
 
@@ -145,7 +145,7 @@ def test_docker_runner_injects_git_safe_directory_env(monkeypatch, tmp_path):
 
 def test_docker_runner_git_safe_directory_env_overridable(monkeypatch, tmp_path):
     """GIT_CONFIG_VALUE_0 can be overridden via sandbox.env."""
-    monkeypatch.setattr("prpilot.sandbox._resolve_git_common_dir", lambda cwd: None)
+    monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
     sandbox = SandboxConfig(
         driver="docker",
         image="alpine",
@@ -159,7 +159,7 @@ def test_docker_runner_git_safe_directory_env_overridable(monkeypatch, tmp_path)
 
 
 def test_docker_runner_network_none(monkeypatch, tmp_path):
-    monkeypatch.setattr("prpilot.sandbox._resolve_git_common_dir", lambda cwd: None)
+    monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
     runner = DockerRunner(SandboxConfig(driver="docker", image="alpine", network="none"))
     args, _ = runner._build_run_command("true", str(tmp_path))
     idx = args.index("--network")
@@ -167,7 +167,7 @@ def test_docker_runner_network_none(monkeypatch, tmp_path):
 
 
 def test_docker_runner_skips_user_when_empty(monkeypatch, tmp_path):
-    monkeypatch.setattr("prpilot.sandbox._resolve_git_common_dir", lambda cwd: None)
+    monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
     runner = DockerRunner(SandboxConfig(driver="docker", image="alpine", user=""))
     args, _ = runner._build_run_command("true", str(tmp_path))
     assert "--user" not in args
@@ -178,7 +178,7 @@ def test_docker_runner_isolate_dirs_adds_tmpfs_mount(monkeypatch, tmp_path):
 
     Actual Docker isolation behavior depends on the runtime environment, so here we only verify argument construction.
     """
-    monkeypatch.setattr("prpilot.sandbox._resolve_git_common_dir", lambda cwd: None)
+    monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
     runner = DockerRunner(SandboxConfig(driver="docker", image="alpine", isolate_dirs=[".venv"]))
     args, _ = runner._build_run_command("true", str(tmp_path))
 
@@ -189,7 +189,7 @@ def test_docker_runner_isolate_dirs_adds_tmpfs_mount(monkeypatch, tmp_path):
 
 
 def test_docker_runner_isolate_dirs_multiple_dirs(monkeypatch, tmp_path):
-    monkeypatch.setattr("prpilot.sandbox._resolve_git_common_dir", lambda cwd: None)
+    monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
     runner = DockerRunner(
         SandboxConfig(
             driver="docker",
@@ -208,14 +208,14 @@ def test_docker_runner_isolate_dirs_multiple_dirs(monkeypatch, tmp_path):
 
 
 def test_docker_runner_isolate_dirs_empty_omits_mount(monkeypatch, tmp_path):
-    monkeypatch.setattr("prpilot.sandbox._resolve_git_common_dir", lambda cwd: None)
+    monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
     runner = DockerRunner(SandboxConfig(driver="docker", image="alpine", isolate_dirs=[]))
     args, _ = runner._build_run_command("true", str(tmp_path))
     assert "--tmpfs" not in args
 
 
 def test_docker_runner_timeout_kills_container(monkeypatch, tmp_path):
-    monkeypatch.setattr("prpilot.sandbox._resolve_git_common_dir", lambda cwd: None)
+    monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
     killed: list[list[str]] = []
 
     def fake_run(cmd, **kwargs):
@@ -242,8 +242,8 @@ def test_make_runner_docker_hard_fails_without_docker(monkeypatch):
 
 
 def test_run_worktree_setup_uses_runner(monkeypatch, tmp_path):
-    import prpilot.orchestrator as orchestrator
-    from prpilot.config import AgentConfig, RepoConfig, SandboxConfig
+    import ghswarm.orchestrator as orchestrator
+    from ghswarm.config import AgentConfig, RepoConfig, SandboxConfig
 
     calls: list[tuple[str, str, int]] = []
 
@@ -272,8 +272,8 @@ def test_run_worktree_setup_uses_runner(monkeypatch, tmp_path):
 
 
 def test_run_worktree_setup_skips_empty_command(monkeypatch):
-    import prpilot.orchestrator as orchestrator
-    from prpilot.config import AgentConfig, RepoConfig
+    import ghswarm.orchestrator as orchestrator
+    from ghswarm.config import AgentConfig, RepoConfig
 
     monkeypatch.setattr(
         orchestrator,
@@ -296,8 +296,8 @@ def test_run_worktree_setup_skips_empty_command(monkeypatch):
 
 
 def test_run_worktree_setup_continues_on_failure(monkeypatch, tmp_path):
-    import prpilot.orchestrator as orchestrator
-    from prpilot.config import AgentConfig, RepoConfig
+    import ghswarm.orchestrator as orchestrator
+    from ghswarm.config import AgentConfig, RepoConfig
 
     class _FailRunner:
         def run(self, command: str, cwd: str, timeout: int) -> tuple[int, str]:

@@ -9,10 +9,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from prpilot import labels as lbl
-from prpilot import state as st
-from prpilot.config import LabelConfig
-from prpilot.github import Issue
+from ghswarm import labels as lbl
+from ghswarm import state as st
+from ghswarm.config import LabelConfig
+from ghswarm.github import Issue
 
 AGENTS = ["claude", "cursor"]
 HOST = "testhost"

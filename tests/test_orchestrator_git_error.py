@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from prpilot import state as st
-from prpilot.config import AgentConfig, LabelConfig, RepoConfig
-from prpilot.events import EventLog
-from prpilot.git_ops import GitError
-from prpilot.github import Issue
-from prpilot.orchestrator import Orchestrator
+from ghswarm import state as st
+from ghswarm.config import AgentConfig, LabelConfig, RepoConfig
+from ghswarm.events import EventLog
+from ghswarm.git_ops import GitError
+from ghswarm.github import Issue
+from ghswarm.orchestrator import Orchestrator
 
 BODY = """## Task breakdown
 
@@ -84,7 +84,7 @@ def _state(**kwargs) -> st.IssueState:
 
 def _orch(monkeypatch, gh: FakeGitHub) -> tuple[Orchestrator, FakeNotifier]:
     monkeypatch.setattr(
-        "prpilot.orchestrator.execute_with_self_healing",
+        "ghswarm.orchestrator.execute_with_self_healing",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("agent should not run")),
     )
 

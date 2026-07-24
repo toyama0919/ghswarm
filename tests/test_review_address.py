@@ -9,12 +9,12 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import prpilot.github as github
-import prpilot.orchestrator as orch_mod
-from prpilot import state as st
-from prpilot.config import AgentConfig, RepoConfig
-from prpilot.github import GitHub, Issue, PRStatus, ReviewItem
-from prpilot.orchestrator import (
+import ghswarm.github as github
+import ghswarm.orchestrator as orch_mod
+from ghswarm import state as st
+from ghswarm.config import AgentConfig, RepoConfig
+from ghswarm.github import GitHub, Issue, PRStatus, ReviewItem
+from ghswarm.orchestrator import (
     REVIEW_RESPONSE_MARKER,
     Orchestrator,
     _format_review_items,

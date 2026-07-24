@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import prpilot.executor as ex
-from prpilot.config import AgentConfig, RepoConfig, _DEFAULT_TRANSIENT_ERROR_PATTERNS
-from prpilot.executor import (
+import ghswarm.executor as ex
+from ghswarm.config import AgentConfig, RepoConfig, _DEFAULT_TRANSIENT_ERROR_PATTERNS
+from ghswarm.executor import (
     _build_command,
     _has_conflict_markers,
     execute_with_self_healing,

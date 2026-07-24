@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from prpilot.events import EventLog, resolve_event_db_path, _truncate_detail
-from prpilot.orchestrator import StepResult
+from ghswarm.events import EventLog, resolve_event_db_path, _truncate_detail
+from ghswarm.orchestrator import StepResult
 
 NOW = datetime(2026, 7, 18, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -15,7 +15,7 @@ def _result(action: str = "implemented", detail: str = "done", issue: int = 42) 
 
 
 def test_resolve_event_db_path_default():
-    assert resolve_event_db_path("~/.prpilot/events.db").endswith(".prpilot/events.db")
+    assert resolve_event_db_path("~/.ghswarm/events.db").endswith(".ghswarm/events.db")
     assert resolve_event_db_path("") == ""
 
 

@@ -1,16 +1,16 @@
-# prpilot config file (template)
-# Copied to ~/.prpilot.yaml by `prpilot init`.
-# Lookup order: --config <path> > ~/.prpilot.yaml > ~/.prpilot.yml
+# ghswarm config file (template)
+# Copied to ~/.ghswarm.yaml by `ghswarm init`.
+# Lookup order: --config <path> > ~/.ghswarm.yaml > ~/.ghswarm.yml
 #
 # Declare multiple repositories under `repositories` and select one with -r <alias>.
 # Put shared settings under `defaults`; override per-repository in each entry.
 
 max_parallel_repos: 3        # Max number of repos to run concurrently (global)
 
-daemon_log: ~/.prpilot/prpilot.log   # Log base path for `loop -d` (start date is inserted into the filename)
-daemon_pid: ~/.prpilot/prpilot.pid   # PID file for `loop -d`
+daemon_log: ~/.ghswarm/ghswarm.log   # Log base path for `loop -d` (start date is inserted into the filename)
+daemon_pid: ~/.ghswarm/ghswarm.pid   # PID file for `loop -d`
 
-# event_db: ~/.prpilot/events.db    # Structured event log (SQLite). Empty string disables it
+# event_db: ~/.ghswarm/events.db    # Structured event log (SQLite). Empty string disables it
 
 defaults:                    # Shared fallback for all repos (optional)
   poll_interval: 60
@@ -53,7 +53,7 @@ defaults:                    # Shared fallback for all repos (optional)
   #     npm_config_cache: /cache/npm
   #   env_passthrough: [GH_TOKEN, GITHUB_TOKEN]
   #   volumes:
-  #     - prpilot-cache:/cache
+  #     - ghswarm-cache:/cache
   #   isolate_dirs:                  # Isolate this path in the worktree via a container-only writable mount
   #     - .venv                      # Python (uv). Use node_modules for node, target for rust
   transient_error_patterns:
@@ -75,7 +75,7 @@ defaults:                    # Shared fallback for all repos (optional)
   # Cap on cumulative agent runs per Issue (0 disables it = unlimited)
   issue_max_agent_runs: 10
   lock_ttl: 14400
-  # event_db: ~/.prpilot/events.db   # Structured event log. Empty string disables it
+  # event_db: ~/.ghswarm/events.db   # Structured event log. Empty string disables it
   # env:                              # Environment variables for gh calls shared by all repos (overridable per repo)
   #   GH_CONFIG_DIR: ~/.config/gh-work
   notify:

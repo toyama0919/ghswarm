@@ -15,11 +15,11 @@ This is a public repository, so all repository-facing artifacts must be in Engli
 
 ## Project overview
 
-`prpilot` is a spec-driven development PM agent that orchestrates multiple coding CLIs, using GitHub Issues as state.
+`ghswarm` is a spec-driven development PM agent that orchestrates multiple coding CLIs, using GitHub Issues as state.
 
-- Source: `src/prpilot/`
+- Source: `src/ghswarm/`
 - Tests: `tests/`
-- Entry point: `prpilot = "prpilot.cli:main"`
+- Entry point: `ghswarm = "ghswarm.cli:main"`
 
 ## Development
 

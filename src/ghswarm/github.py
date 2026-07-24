@@ -15,7 +15,7 @@ from typing import Any
 
 from .logging_utils import get_logger
 
-log = get_logger("prpilot.github")
+log = get_logger("ghswarm.github")
 
 _GHA_RUN_URL_RE = re.compile(r"/actions/runs/(\d+)")
 _FAILED_GHA_LOG_MAX = 20000
