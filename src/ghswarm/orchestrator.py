@@ -28,11 +28,11 @@ from .notify import Notifier
 from .sandbox import make_runner
 from .spec import Spec, parse_spec
 
-log = get_logger("prpilot.orch")
+log = get_logger("ghswarm.orch")
 
-# Marker for the "review addressed" comment that prpilot posts on a PR itself.
-# Used so prpilot does not pick up its own comment as an unaddressed review.
-REVIEW_RESPONSE_MARKER = "<!-- prpilot:review-response -->"
+# Marker for the "review addressed" comment that ghswarm posts on a PR itself.
+# Used so ghswarm does not pick up its own comment as an unaddressed review.
+REVIEW_RESPONSE_MARKER = "<!-- ghswarm:review-response -->"
 
 
 @dataclass
@@ -536,7 +536,7 @@ class Orchestrator:
     def _pending_review_items(self, state: st.IssueState) -> list[ReviewItem]:
         """Filter unaddressed PR review comments (human / bot) using a high-water mark.
 
-        - Exclude prpilot's own "addressed" comments (prevents an infinite loop).
+        - Exclude ghswarm's own "addressed" comments (prevents an infinite loop).
         - Treat only comments after last_review_addressed_at as unaddressed.
         - Approval-only or chit-chat-only comments are not actionable (_is_actionable).
         """
@@ -628,7 +628,7 @@ class Orchestrator:
 
         summary = f"🔧 **{agent_name}**: addressed {len(pending)} PR review comment(s) and pushed."
         self.gh.comment(issue.number, summary)
-        # Also leave a response on the PR (with the marker so prpilot can identify its own comment).
+        # Also leave a response on the PR (with the marker so ghswarm can identify its own comment).
         self.gh.pr_comment(state.pr_number, f"{REVIEW_RESPONSE_MARKER}\n{summary}")
         return StepResult(issue.number, "review_addressed", f"{len(pending)} addressed")
 

@@ -1,8 +1,8 @@
-# prpilot
+# ghswarm
 
-[![CI](https://github.com/toyama0919/prpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/toyama0919/prpilot/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/prpilot.svg)](https://pypi.org/project/prpilot/)
-[![Python versions](https://img.shields.io/pypi/pyversions/prpilot.svg)](https://pypi.org/project/prpilot/)
+[![CI](https://github.com/toyama0919/ghswarm/actions/workflows/ci.yml/badge.svg)](https://github.com/toyama0919/ghswarm/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/ghswarm.svg)](https://pypi.org/project/ghswarm/)
+[![Python versions](https://img.shields.io/pypi/pyversions/ghswarm.svg)](https://pypi.org/project/ghswarm/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A development-PM agent that, on a foundation of **spec-driven development**, treats GitHub Issues as "state"
@@ -16,21 +16,21 @@ checkboxes) and in spec files. Even if the process dies, reading the Issue lets 
 
 ```mermaid
 flowchart TB
-  subgraph L1["Line 1 · human in the loop (skill: prpilot-spec, outside the loop)"]
+  subgraph L1["Line 1 · human in the loop (skill: ghswarm-spec, outside the loop)"]
     direction LR
     A1[draft in tmp/spec/] --> A2[AI review] --> A3[human review] --> A4[create Issue] --> A5[move to .specs/<br/>+ open draft PR]
   end
-  subgraph L2["Line 2 · prpilot resident loop (autonomous, this CLI)"]
+  subgraph L2["Line 2 · ghswarm resident loop (autonomous, this CLI)"]
     direction LR
     B1[implement on PR branch] --> B2[AI review] --> B3[mark PR ready] --> B4[wait CI/approve] --> B5[auto squash merge]
   end
   L1 --> L2
 ```
 
-- **Line 1** is handled by the Claude Code skill [`prpilot-spec`](.claude/skills/prpilot-spec/SKILL.md).
+- **Line 1** is handled by the Claude Code skill [`ghswarm-spec`](.claude/skills/ghswarm-spec/SKILL.md).
   The spec draft is placed in `tmp/spec/` to await human approval; after approval it moves to `.specs/YYYY-MM-DD-issue-N.md`,
   is committed on branch `issue-N`, and opens a **draft spec PR** along with an Issue carrying a task checklist.
-- **Line 2** is prpilot itself. It takes over that spec PR's branch, **stacks implementation commits onto the same PR**,
+- **Line 2** is ghswarm itself. It takes over that spec PR's branch, **stacks implementation commits onto the same PR**,
   and drives it all the way to auto-merge. Because the spec and the implementation end up in a single PR, it is easy to review.
 
 ## Design highlights
@@ -38,7 +38,7 @@ flowchart TB
 - **Mutual exclusion via labels** — `status: busy-<agent>` / `idle` / `blocked` / `completed`.
   Only one CLI runs at a time within the same repository. The lock lives on GitHub, so it is shared across processes.
 - **State persisted in the Issue body** — saved as JSON in an HTML comment at the end of the body
-  (`<!-- PRPILOT_STATE_START ... PRPILOT_STATE_END -->`), holding `next_action` / `branch_name` / `spec_path` / `pr_number` and so on.
+  (`<!-- GHSWARM_STATE_START ... GHSWARM_STATE_END -->`), holding `next_action` / `branch_name` / `spec_path` / `pr_number` and so on.
 - **Progress via checkboxes** — `- [ ] task` items in the Issue body are worked through and updated to `- [x]`. Incomplete tasks are
   **handed to a single CLI run all at once** (because each CLI is a one-shot headless invocation that loses its context every time,
   launching one per task would force it to re-read the codebase). Once verify passes, all items are checked.
@@ -47,7 +47,7 @@ flowchart TB
   in the config (the `command` under `agents.implement` / `agents.review`). There is no dynamic routing by an LLM.
 - **Self-healing** — CLI run → tests → on failure, retry with the log attached (up to N times). If that fails, `git reset --hard`
   rolls back, sets `status: blocked`, and escalates to a human.
-- **Clarification** — if the spec is unclear during implementation, the agent writes `.agent_question.md` and exits. prpilot comments on the Issue,
+- **Clarification** — if the spec is unclear during implementation, the agent writes `.agent_question.md` and exits. ghswarm comments on the Issue,
   sets `status: blocked`, and once an answer is posted it resumes with `--resume`.
 - **CI/approve gate → auto-merge → post-merge CI gate** — after the PR is created, it polls as `wait_ci`.
   Once all CI succeeds and the PR review is approved (`require_approval`), it squash-merges. On CI failure it blocks.
@@ -83,7 +83,7 @@ stateDiagram-v2
 ## Installation
 
 ```bash
-cd prpilot && pip install -e .
+cd ghswarm && pip install -e .
 ```
 
 Prerequisites: `gh` (already `gh auth login`ed), and each coding CLI you use being authenticated and able to run headless.
@@ -91,7 +91,7 @@ Prerequisites: `gh` (already `gh auth login`ed), and each coding CLI you use bei
 ## Setup
 
 ```bash
-prpilot init && $EDITOR ~/.prpilot.yaml   # edit repositories / agents, etc.
+ghswarm init && $EDITOR ~/.ghswarm.yaml   # edit repositories / agents, etc.
 ```
 
 ### Config file lookup order
@@ -99,38 +99,38 @@ prpilot init && $EDITOR ~/.prpilot.yaml   # edit repositories / agents, etc.
 Only the first file found is used (no merging).
 
 1. `--config <path>` (explicit)
-2. `~/.prpilot.yaml`
-3. `~/.prpilot.yml`
+2. `~/.ghswarm.yaml`
+3. `~/.ghswarm.yml`
 
-Config is **centralized in `~/.prpilot.yaml` at home**. Declare multiple repositories under `repositories:` as a
+Config is **centralized in `~/.ghswarm.yaml` at home**. Declare multiple repositories under `repositories:` as a
 mapping keyed by alias, and put shared settings under `defaults:`. Each repo entry requires
 `repo` (owner/repo) and `path` (local clone).
 
 `max_parallel_repos` limits the number of repos run concurrently during `loop` (default 3).
 
 `daemon_log` / `daemon_pid` set the log base path and PID file for daemon residency (defaults are
-`~/.prpilot/prpilot.log` / `~/.prpilot/prpilot.pid`). When started with `-d`, the start date
-`-YYYY-MM-DD` is inserted just before the log base name's extension (e.g. `~/.prpilot/prpilot-2026-07-18.log`). No rotation is done.
+`~/.ghswarm/ghswarm.log` / `~/.ghswarm/ghswarm.pid`). When started with `-d`, the start date
+`-YYYY-MM-DD` is inserted just before the log base name's extension (e.g. `~/.ghswarm/ghswarm-2026-07-18.log`). No rotation is done.
 
 ### Event log (for observation)
 
-The result of each step (`action` / `detail`) is, by default, also recorded in SQLite at `~/.prpilot/events.db`
+The result of each step (`action` / `detail`) is, by default, also recorded in SQLite at `~/.ghswarm/events.db`
 (changeable via `event_db`, empty string disables it). **The labels and Issue body on GitHub are the source of truth**,
 and the event DB is derived data for observation/auditing (losing it does not affect resumability). Do not lean state on the DB.
 
 `dry_run` and `action=skipped` (passes such as lock held / waiting on CI) are not recorded. There is no fixed aggregation command
 (such as `metrics`); the intent is to accumulate raw events and later have an AI skill write SQL for ad-hoc analysis.
 
-In v1, `prpilot history` **only opens a single DB** (when `-r` is unspecified, the `event_db` of the first repo).
+In v1, `ghswarm history` **only opens a single DB** (when `-r` is unspecified, the `event_db` of the first repo).
 If you split `event_db` per repo, events from other DBs are not visible from `history`.
 
 If you place `event_db` inside the repository, add `*.db` / `*.db-wal` / `*.db-shm` to `.gitignore`
-(not needed under the default `~/.prpilot/`).
+(not needed under the default `~/.ghswarm/`).
 
 ## Config reference
 
-A list of all keys. For a template, see [`config.example.yaml`](src/prpilot/config.example.yaml) (`prpilot init` copies it
-to `~/.prpilot.yaml`). Within string values, `${VAR}` / `${VAR:-default}` expand to environment variables
+A list of all keys. For a template, see [`config.example.yaml`](src/ghswarm/config.example.yaml) (`ghswarm init` copies it
+to `~/.ghswarm.yaml`). Within string values, `${VAR}` / `${VAR:-default}` expand to environment variables
 (`${VAR}` errors if unset, `${VAR:-default}` uses default when unset).
 
 The shared settings under `defaults:` and each `repositories.<alias>` entry are **deep-merged key by key**
@@ -144,8 +144,8 @@ in `defaults:` as well as in each repo entry.
 | `repositories` | (required) | Mapping of repo configs keyed by alias. Select with `-r <alias>` |
 | `defaults` | `{}` | Fallback shared by all repos (takes the RepoConfig items below) |
 | `max_parallel_repos` | `3` | Upper bound on repos run concurrently during `loop` (1 or more) |
-| `daemon_log` | `~/.prpilot/prpilot.log` | Log base path for `loop -d` (start date `-YYYY-MM-DD` is appended) |
-| `daemon_pid` | `~/.prpilot/prpilot.pid` | PID file for `loop -d` |
+| `daemon_log` | `~/.ghswarm/ghswarm.log` | Log base path for `loop -d` (start date `-YYYY-MM-DD` is appended) |
+| `daemon_pid` | `~/.ghswarm/ghswarm.pid` | PID file for `loop -d` |
 
 ### repositories.&lt;alias&gt; (= RepoConfig; can also go in `defaults`)
 
@@ -176,8 +176,8 @@ in `defaults:` as well as in each repo entry.
 | `max_retries` | `3` | Self-healing retry cap within a single run |
 | `issue_max_agent_runs` | `10` | Cumulative agent-run cap per Issue. `0` means unlimited |
 | `lock_ttl` | `14400` | Absolute TTL of the busy lock (seconds). On the same host, pid check takes precedence |
-| `event_db` | `~/.prpilot/events.db` | SQLite path for the structured event log. Empty string disables it |
-| `activity_dir` | `~/.prpilot/activity` | Location for activity files while the daemon runs. Empty string disables it |
+| `event_db` | `~/.ghswarm/events.db` | SQLite path for the structured event log. Empty string disables it |
+| `activity_dir` | `~/.ghswarm/activity` | Location for activity files while the daemon runs. Empty string disables it |
 | `env` | `{}` | Environment variables injected into `gh` calls for this repo (`~` expansion applies) |
 | `agents` | (required) | Phase → CLI invocation definition (below) |
 | `labels` | defaults below | Status label names |
@@ -244,26 +244,26 @@ agents:
 
 ```bash
 # Line 1: prepare the spec and Issue (in Claude Code)
-/prpilot-spec  ...request...
+/ghswarm-spec  ...request...
 
-# Line 2: prpilot (cwd is arbitrary; the configured path is the base for git operations)
-prpilot status                     # Issue state across all repos
-prpilot status -r main             # only alias main
-prpilot history                    # local event log (latest 50)
-prpilot history -r main --issue 42 # filter by repo / Issue
-prpilot run 42 -r main --dry-run # inspect the plan for the next single step
-prpilot run 42 -r main             # run Issue #42 to completion
-prpilot run 42 -r main --resume    # resume from awaiting-clarification
-prpilot loop                       # resident parallel polling across all repos
-prpilot loop -d                    # background residency (does not occupy the terminal)
-prpilot loop --stop                # stop the resident daemon
-prpilot loop -r a -r b             # only aliases a, b
-prpilot loop --once                # one pass over all repos (for cron)
+# Line 2: ghswarm (cwd is arbitrary; the configured path is the base for git operations)
+ghswarm status                     # Issue state across all repos
+ghswarm status -r main             # only alias main
+ghswarm history                    # local event log (latest 50)
+ghswarm history -r main --issue 42 # filter by repo / Issue
+ghswarm run 42 -r main --dry-run # inspect the plan for the next single step
+ghswarm run 42 -r main             # run Issue #42 to completion
+ghswarm run 42 -r main --resume    # resume from awaiting-clarification
+ghswarm loop                       # resident parallel polling across all repos
+ghswarm loop -d                    # background residency (does not occupy the terminal)
+ghswarm loop --stop                # stop the resident daemon
+ghswarm loop -r a -r b             # only aliases a, b
+ghswarm loop --once                # one pass over all repos (for cron)
 
 # After starting the daemon, tail the actual log path shown in the banner
-# tail -f ~/.prpilot/prpilot-2026-07-18.log
+# tail -f ~/.ghswarm/ghswarm-2026-07-18.log
 
-# cron example (every 5 minutes):  */5 * * * * prpilot loop --once >> ~/.prpilot/prpilot-cron.log 2>&1
+# cron example (every 5 minutes):  */5 * * * * ghswarm loop --once >> ~/.ghswarm/ghswarm-cron.log 2>&1
 ```
 
 **Choosing a residency mode**: `loop -d` (daemon residency) and `loop --once` × cron are mutually exclusive. Use only one.
@@ -276,5 +276,5 @@ Daemon logs accumulate one file per start date. Manage size at your discretion w
 - With `require_approval: true`, a PR is not merged until it gets an approval. In setups with no approver,
   set it to `false`, or gate on an approve from another agent/human.
 - Place the spec on the work branch `issue-N` (= the spec PR's branch), and **keep the spec PR as a draft; do not merge it**.
-  prpilot finds and takes over origin's spec PR by branch name. If you merge it first, the spec lands on default, so implementation
+  ghswarm finds and takes over origin's spec PR by branch name. If you merge it first, the spec lands on default, so implementation
   itself can continue, but the implementation splits off into a separate new PR.

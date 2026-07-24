@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from prpilot.spec import Spec, parse_spec
+from ghswarm.spec import Spec, parse_spec
 
 
 def test_verify_as_list_is_joined_with_and():
     spec = parse_spec(
-        "---\nverify:\n  - pip install -e .\n  - prpilot --help\n---\n# Title\nBody\n"
+        "---\nverify:\n  - pip install -e .\n  - ghswarm --help\n---\n# Title\nBody\n"
     )
-    assert spec.verify_command == "(pip install -e .) && (prpilot --help)"
+    assert spec.verify_command == "(pip install -e .) && (ghswarm --help)"
     assert spec.body.startswith("# Title")
     assert "verify" not in spec.body  # front matter is stripped from the body
 

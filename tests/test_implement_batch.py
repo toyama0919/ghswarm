@@ -9,10 +9,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from prpilot import state as st
-from prpilot.config import AgentConfig, RepoConfig
-from prpilot.github import Issue
-from prpilot.orchestrator import Orchestrator, StepResult
+from ghswarm import state as st
+from ghswarm.config import AgentConfig, RepoConfig
+from ghswarm.github import Issue
+from ghswarm.orchestrator import Orchestrator, StepResult
 
 BODY = """## Task breakdown
 
@@ -107,7 +107,7 @@ def _orchestrator(
         calls.append(prompt)
         return Result(ok, "" if ok else "cli_failed")
 
-    monkeypatch.setattr("prpilot.orchestrator.execute_with_self_healing", fake_execute)
+    monkeypatch.setattr("ghswarm.orchestrator.execute_with_self_healing", fake_execute)
 
     if create_spec:
         _write_spec(tmp_path, spec_path)

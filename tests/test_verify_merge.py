@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from prpilot import state as st
-from prpilot.config import AgentConfig, RepoConfig
-from prpilot.github import Issue
-from prpilot.orchestrator import Orchestrator
+from ghswarm import state as st
+from ghswarm.config import AgentConfig, RepoConfig
+from ghswarm.github import Issue
+from ghswarm.orchestrator import Orchestrator
 
 
 class FakeGitHub:

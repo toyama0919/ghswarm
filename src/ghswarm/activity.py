@@ -13,7 +13,7 @@ from typing import Callable
 from .config import resolve_activity_dir
 from .logging_utils import get_logger
 
-log = get_logger("prpilot.activity")
+log = get_logger("ghswarm.activity")
 
 __all__ = [
     "ActivityEntry",

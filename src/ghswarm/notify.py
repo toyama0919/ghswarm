@@ -13,13 +13,13 @@ from .config import NotifyConfig
 from .github import Issue
 from .logging_utils import get_logger
 
-log = get_logger("prpilot.notify")
+log = get_logger("ghswarm.notify")
 
 
 def _format_message(repo_name: str, issue: Issue, reason_code: str, detail: str) -> tuple[str, str]:
     """Build the notification body (for Slack and macOS)."""
     reason_part = f"{reason_code}: {detail}" if detail else reason_code
-    core = f'[prpilot] {repo_name} #{issue.number} "{issue.title}" is blocked ({reason_part})'
+    core = f'[ghswarm] {repo_name} #{issue.number} "{issue.title}" is blocked ({reason_part})'
     url = issue.url or f"https://github.com/{repo_name}/issues/{issue.number}"
     slack_body = f"{core}\n{url}"
     macos_body = core
@@ -29,7 +29,7 @@ def _format_message(repo_name: str, issue: Issue, reason_code: str, detail: str)
 def _format_completed_message(repo_name: str, issue: Issue, pr_number: int) -> tuple[str, str]:
     """Build the completion notification body (for Slack and macOS)."""
     core = (
-        f'[prpilot] {repo_name} #{issue.number} "{issue.title}" '
+        f'[ghswarm] {repo_name} #{issue.number} "{issue.title}" '
         f"is complete (PR #{pr_number} merged)"
     )
     url = issue.url or f"https://github.com/{repo_name}/issues/{issue.number}"
@@ -103,7 +103,7 @@ class Notifier:
         if platform.system() != "Darwin":
             return
         escaped = body.replace("\\", "\\\\").replace('"', '\\"')
-        script = f'display notification "{escaped}" with title "prpilot"'
+        script = f'display notification "{escaped}" with title "ghswarm"'
         try:
             subprocess.run(
                 ["osascript", "-e", script],

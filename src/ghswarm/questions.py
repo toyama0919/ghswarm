@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .logging_utils import get_logger
 
-log = get_logger("prpilot.questions")
+log = get_logger("ghswarm.questions")
 
 
 def question_prompt_hint(question_file: str) -> str:

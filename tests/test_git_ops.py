@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from prpilot.git_ops import Git, GitError
+from ghswarm.git_ops import Git, GitError
 
 
 class FakeGit(Git):

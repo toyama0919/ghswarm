@@ -156,7 +156,7 @@ class DockerRunner(ShellRunner):
             dest = posixpath.join("/workspace", d)
             args.extend(["--tmpfs", f"{dest}:exec,mode=1777"])
 
-        container_name = f"prpilot-sbx-{uuid.uuid4().hex}"
+        container_name = f"ghswarm-sbx-{uuid.uuid4().hex}"
         args.extend(["--name", container_name])
         args.extend([self._sandbox.image, "sh", "-c", command])
         return args, container_name

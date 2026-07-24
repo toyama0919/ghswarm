@@ -16,7 +16,7 @@ from .github import GitHub, Issue
 from .logging_utils import get_logger
 from .state import IssueState
 
-log = get_logger("prpilot.labels")
+log = get_logger("ghswarm.labels")
 
 
 def current_host() -> str:

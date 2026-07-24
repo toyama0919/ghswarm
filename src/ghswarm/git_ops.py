@@ -12,7 +12,7 @@ from typing import Literal
 
 from .logging_utils import get_logger
 
-log = get_logger("prpilot.git")
+log = get_logger("ghswarm.git")
 
 
 class GitError(Exception):
@@ -22,7 +22,7 @@ class GitError(Exception):
 def detect_repo_root(cwd: str) -> str:
     """Detect the root of the repository that `cwd` belongs to.
 
-    `Path.cwd()` is not necessarily the root, since prpilot may be launched from a
+    `Path.cwd()` is not necessarily the root, since ghswarm may be launched from a
     subdirectory. This is used as the base for resolving relative worktree_dir paths
     and for the cwd of the `Git` instance for the main repository.
     """

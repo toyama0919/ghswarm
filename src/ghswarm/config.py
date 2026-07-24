@@ -2,8 +2,8 @@
 
 Search order (only the first file found is used; no merging):
   1. the path given explicitly via --config
-  2. ~/.prpilot.yaml in the home directory
-  3. ~/.prpilot.yml in the home directory
+  2. ~/.ghswarm.yaml in the home directory
+  3. ~/.ghswarm.yml in the home directory
 
 ${VAR} / ${VAR:-default} in string values are expanded from environment variables.
 """
@@ -98,7 +98,7 @@ class LabelConfig:
 
 @dataclass
 class RepoConfig:
-    """prpilot settings for a single repository."""
+    """ghswarm settings for a single repository."""
 
     # phase name (implement / review) -> the agent definition used for that phase.
     agents: dict[str, AgentConfig]
@@ -156,9 +156,9 @@ class RepoConfig:
     # precedence, so this is the fallback cap.
     lock_ttl: int = 14400
     # SQLite path for the structured event log. Empty string disables it.
-    event_db: str = "~/.prpilot/events.db"
+    event_db: str = "~/.ghswarm/events.db"
     # directory for activity files while the daemon runs. Empty string disables it.
-    activity_dir: str = "~/.prpilot/activity"
+    activity_dir: str = "~/.ghswarm/activity"
     # env vars injected into this repo's gh invocations (overrides os.environ per key).
     env: dict[str, str] = field(default_factory=dict)
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
@@ -182,8 +182,8 @@ class AppConfig:
 
     repositories: dict[str, RepoConfig]
     max_parallel_repos: int = 3
-    daemon_log: str = os.path.expanduser("~/.prpilot/prpilot.log")
-    daemon_pid: str = os.path.expanduser("~/.prpilot/prpilot.pid")
+    daemon_log: str = os.path.expanduser("~/.ghswarm/ghswarm.log")
+    daemon_pid: str = os.path.expanduser("~/.ghswarm/ghswarm.pid")
     source_path: Path | None = None
 
 
@@ -512,8 +512,8 @@ def _candidate_paths(explicit: str | None) -> list[Path]:
         return [Path(explicit).expanduser()]
     home = Path.home()
     return [
-        home / ".prpilot.yaml",
-        home / ".prpilot.yml",
+        home / ".ghswarm.yaml",
+        home / ".ghswarm.yml",
     ]
 
 
@@ -562,8 +562,8 @@ def _build_repo_config_from_raw(
         ci_fix_max_retries=int(raw.get("ci_fix_max_retries", 3)),
         issue_max_agent_runs=int(raw.get("issue_max_agent_runs", 10)),
         lock_ttl=int(raw.get("lock_ttl", 14400)),
-        event_db=raw.get("event_db", "~/.prpilot/events.db"),
-        activity_dir=raw.get("activity_dir", "~/.prpilot/activity"),
+        event_db=raw.get("event_db", "~/.ghswarm/events.db"),
+        activity_dir=raw.get("activity_dir", "~/.ghswarm/activity"),
         env=_load_env(raw, source),
         sandbox=_load_sandbox(raw, source),
     )
@@ -576,7 +576,7 @@ def load_app_config(explicit: str | None = None) -> AppConfig:
             path = cand
             break
     if path is None:
-        raise ConfigError("No config file found. Run `prpilot init` to create a template.")
+        raise ConfigError("No config file found. Run `ghswarm init` to create a template.")
 
     with path.open(encoding="utf-8") as f:
         raw: dict[str, Any] = yaml.safe_load(f) or {}
@@ -617,8 +617,8 @@ def load_app_config(explicit: str | None = None) -> AppConfig:
             str(alias), repo_name, repo_path, merged, path
         )
 
-    daemon_log = os.path.expanduser(raw.get("daemon_log", "~/.prpilot/prpilot.log"))
-    daemon_pid = os.path.expanduser(raw.get("daemon_pid", "~/.prpilot/prpilot.pid"))
+    daemon_log = os.path.expanduser(raw.get("daemon_log", "~/.ghswarm/ghswarm.log"))
+    daemon_pid = os.path.expanduser(raw.get("daemon_pid", "~/.ghswarm/ghswarm.pid"))
 
     return AppConfig(
         repositories=repositories,
@@ -630,7 +630,7 @@ def load_app_config(explicit: str | None = None) -> AppConfig:
 
 
 def load_config(explicit: str | None = None) -> AppConfig:
-    """Load the home config (~/.prpilot.yaml) and return an AppConfig."""
+    """Load the home config (~/.ghswarm.yaml) and return an AppConfig."""
     return load_app_config(explicit)
 
 
@@ -647,7 +647,7 @@ def resolve_worktree_dir(worktree_dir: str, repo_root: Path) -> Path:
     return path.resolve()
 
 
-_DEFAULT_ACTIVITY_DIR = "~/.prpilot/activity"
+_DEFAULT_ACTIVITY_DIR = "~/.ghswarm/activity"
 
 
 def resolve_activity_dir(raw: str) -> str:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prpilot import activity
+from ghswarm import activity
 
 
 def test_activity_write_clear_read_roundtrip(tmp_path):

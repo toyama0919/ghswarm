@@ -1,13 +1,13 @@
 ---
-name: prpilot-check
-description: "Diagnoses Issues where prpilot stopped its autonomous loop at status: blocked, and for those safely resolvable, confirms verify passes in a worktree, then returns them to status: idle to bring them back. Use for prpilot has stopped, checking blocked, returning to idle, checking development status, isolating the cause of a stop, etc. Called as a later stage in the same session as prpilot-spec."
+name: ghswarm-check
+description: "Diagnoses Issues where ghswarm stopped its autonomous loop at status: blocked, and for those safely resolvable, confirms verify passes in a worktree, then returns them to status: idle to bring them back. Use for ghswarm has stopped, checking blocked, returning to idle, checking development status, isolating the cause of a stop, etc. Called as a later stage in the same session as ghswarm-spec."
 ---
 
-# prpilot-check (diagnose blocked Issues, return to idle)
+# ghswarm-check (diagnose blocked Issues, return to idle)
 
-A skill that, for Issues where prpilot (Line 2's resident loop) stopped autonomous processing at `status: blocked`, **isolates and diagnoses the cause of the stop, and for those safely resolvable, fixes them in a worktree, confirms verify passes, and returns them to `status: idle` to bring them back into the loop**.
+A skill that, for Issues where ghswarm (Line 2's resident loop) stopped autonomous processing at `status: blocked`, **isolates and diagnoses the cause of the stop, and for those safely resolvable, fixes them in a worktree, confirms verify passes, and returns them to `status: idle` to bring them back into the loop**.
 
-- Line 1 (prpilot-spec): spec filing → Issue creation → (optional) starting development with `prpilot run`
+- Line 1 (ghswarm-spec): spec filing → Issue creation → (optional) starting development with `ghswarm run`
 - **This skill (later stage)**: **diagnosis → remediation → return to idle** when run or loop stopped at blocked
 
 ## Overview
@@ -23,21 +23,21 @@ A skill that, for Issues where prpilot (Line 2's resident loop) stopped autonomo
 
 ## Prerequisites
 
-- `gh` (authenticated) and the `prpilot` CLI are usable.
+- `gh` (authenticated) and the `ghswarm` CLI are usable.
 - **The target is always the git repository in the current directory**. Before starting, `cd` into the clone of the target repository. owner/repo is auto-detected by `gh`, so do not pass `--repo`.
-- Usually called from **a later stage of the same session** where you created the spec/Issue with `prpilot-spec` and ran `prpilot run`. The immediately preceding run's log (stderr) is the primary source for diagnosis.
-- **In step 0, run `prpilot config`, obtain the resolved values, and use them in later steps** (do not hardcode).
-- If `prpilot config` exits non-zero, use these fallback defaults: `spec_dir=.specs` / `branch_prefix=issue-` / `base_branch=main` / `idle_label=status: idle` / `blocked_label=status: blocked` / `path=<cwd>`.
+- Usually called from **a later stage of the same session** where you created the spec/Issue with `ghswarm-spec` and ran `ghswarm run`. The immediately preceding run's log (stderr) is the primary source for diagnosis.
+- **In step 0, run `ghswarm config`, obtain the resolved values, and use them in later steps** (do not hardcode).
+- If `ghswarm config` exits non-zero, use these fallback defaults: `spec_dir=.specs` / `branch_prefix=issue-` / `base_branch=main` / `idle_label=status: idle` / `blocked_label=status: blocked` / `path=<cwd>`.
 
-## prpilot's recovery mechanism (facts based on the implementation)
+## ghswarm's recovery mechanism (facts based on the implementation)
 
 ### blocked = lock
 
-`labels.is_locked()` treats the `status: blocked` label (`prpilot config`'s `blocked_label`) **as a lock, same as busy labels**. A blocked Issue is skipped by `prpilot loop`'s polling and does not advance autonomously. `prpilot run <N>` also skips it normally, but there is a path to resume blocked with `--resume` (such as resuming from awaiting clarification `clarification`).
+`labels.is_locked()` treats the `status: blocked` label (`ghswarm config`'s `blocked_label`) **as a lock, same as busy labels**. A blocked Issue is skipped by `ghswarm loop`'s polling and does not advance autonomously. `ghswarm run <N>` also skips it normally, but there is a path to resume blocked with `--resume` (such as resuming from awaiting clarification `clarification`).
 
-### PRPILOT_STATE persistence
+### GHSWARM_STATE persistence
 
-State is saved as JSON inside the `<!-- PRPILOT_STATE_START` … `PRPILOT_STATE_END -->` HTML comment at the end of the Issue body (`state.py`). Main fields:
+State is saved as JSON inside the `<!-- GHSWARM_STATE_START` … `GHSWARM_STATE_END -->` HTML comment at the end of the Issue body (`state.py`). Main fields:
 
 | Field | Purpose |
 |---|---|
@@ -68,8 +68,8 @@ State is saved as JSON inside the `<!-- PRPILOT_STATE_START` … `PRPILOT_STATE_
 
 The verify that runs in the implement, review, conflict-resolution, and CI-fix phases is resolved in the following priority:
 
-1. **The spec front-matter `verify:`** (reads the file `PRPILOT_STATE.spec_path` points to, within the worktree)
-2. config's `test_command` (does not appear in `prpilot config`; refer to the repo's config YAML)
+1. **The spec front-matter `verify:`** (reads the file `GHSWARM_STATE.spec_path` points to, within the worktree)
+2. config's `test_command` (does not appear in `ghswarm config`; refer to the repo's config YAML)
 3. empty → local verification skipped (CI alone is the gate)
 
 A list-form `verify` wraps each element in a subshell `(...)` and joins with ` && `. A string form is run as-is as a single command.
@@ -79,18 +79,18 @@ A list-form `verify` wraps each element in a subshell `(...)` and joins with ` &
 After returning to idle:
 
 ```bash
-prpilot run <N>              # normal resume (add -r <ALIAS> when multiple repos are registered)
-prpilot run <N> --resume     # when the blocked label remains / after budget_exhausted /
+ghswarm run <N>              # normal resume (add -r <ALIAS> when multiple repos are registered)
+ghswarm run <N> --resume     # when the blocked label remains / after budget_exhausted /
                              # wait_for_clarification (--resume required even if the label is idle)
 ```
 
-`--resume` bypasses the blocked-label lock and clears `last_notified_reason` in memory. If you returned the label to idle in step 3, `prpilot run <N>` is usually enough.
+`--resume` bypasses the blocked-label lock and clears `last_notified_reason` in memory. If you returned the label to idle in step 3, `ghswarm run <N>` is usually enough.
 
-If `prpilot loop` is running, an idle-ized Issue is picked up automatically on the next poll (confirm with `pgrep -fl "prpilot loop"`).
+If `ghswarm loop` is running, an idle-ized Issue is picked up automatically on the next poll (confirm with `pgrep -fl "ghswarm loop"`).
 
 ## reason_code quick reference
 
-The reason_codes that `orchestrator._enter_blocked()` / `_block_for_missing_spec()` set, and their remediation. Identify by cross-referencing the caller's `gh.comment` (if any) and `PRPILOT_STATE.last_notified_reason`.
+The reason_codes that `orchestrator._enter_blocked()` / `_block_for_missing_spec()` set, and their remediation. Identify by cross-referencing the caller's `gh.comment` (if any) and `GHSWARM_STATE.last_notified_reason`.
 
 | reason_code | Typical detail / comment traits | Auto-recovery possible? | Remediation | Counter adjustment |
 |---|---|---|---|---|
@@ -104,17 +104,17 @@ The reason_codes that `orchestrator._enter_blocked()` / `_block_for_missing_spec
 | `clarification` | `🤖 **Clarification from …**` comment | **Report only** (keep blocked) | Present the question to the user. `--resume` after an answer | None |
 | `merge_ci_failed` | Post-merge CI failed. Issue stays open | **Report only** (product decision) | A human checks/fixes the merge target's CI | None |
 | `pr_create_failed` | PR creation exception | Conditional | Check the branch, permissions, existing PR | None |
-| `spec_missing` | `🚫 **Cannot start**: spec is not set` | **Possible** (after setting the spec) | Set `spec_path` in PRPILOT_STATE, or re-file with prpilot-spec | None |
+| `spec_missing` | `🚫 **Cannot start**: spec is not set` | **Possible** (after setting the spec) | Set `spec_path` in GHSWARM_STATE, or re-file with ghswarm-spec | None |
 | `spec_not_in_branch` | `🚫 **Cannot start**: spec is not in the branch` | **Possible** (after committing the spec) | Commit and push the spec to the work branch | None |
 
 ## Steps
 
 ### 0. Fetch config and identify the target Issue
 
-**Fetch prpilot config** (when multiple repos are registered or cwd is an unregistered repo, add `-r ALIAS`):
+**Fetch ghswarm config** (when multiple repos are registered or cwd is an unregistered repo, add `-r ALIAS`):
 
 ```bash
-prpilot config          # or prpilot config -r <ALIAS>
+ghswarm config          # or ghswarm config -r <ALIAS>
 ```
 
 On success, extract the following from the JSON and keep them as variables:
@@ -126,11 +126,11 @@ On success, extract the following from the JSON and keep them as variables:
 
 **Identify the target Issue**:
 
-- If the user specified a number, use it (an Issue you `prpilot run` in the same session is typical)
+- If the user specified a number, use it (an Issue you `ghswarm run` in the same session is typical)
 - If unspecified, list Issues with the blocked label:
 
 ```bash
-cfg=$(prpilot config)   # use fallback blocked_label on failure
+cfg=$(ghswarm config)   # use fallback blocked_label on failure
 blocked=$(jq -r '.blocked_label' <<<"$cfg")
 gh issue list --label "$blocked" --state open --json number,title,labels
 ```
@@ -143,13 +143,13 @@ Priority of primary sources (**since a later stage of the same session is the ma
 
 #### (a) State and stop reason
 
-Extract `PRPILOT_STATE` from the Issue body:
+Extract `GHSWARM_STATE` from the Issue body:
 
 ```bash
 gh issue view <N> --json body -q .body | python3 -c "
 import re, json, sys
 body = sys.stdin.read()
-m = re.search(r'<!-- PRPILOT_STATE_START\s*(.*?)\s*PRPILOT_STATE_END -->', body, re.DOTALL)
+m = re.search(r'<!-- GHSWARM_STATE_START\s*(.*?)\s*GHSWARM_STATE_END -->', body, re.DOTALL)
 print(json.dumps(json.loads(m.group(1)), indent=2, ensure_ascii=False) if m else '{}')
 "
 ```
@@ -166,28 +166,28 @@ gh api repos/{owner}/{repo}/issues/<N>/comments --jq '.[-1].body'
 
 Comments starting with `⚠️` / `🚫` hold clues to the reason (`reason=max_retries`, CI URL, spec path, etc.).
 
-#### (b) `prpilot run` log / daemon log
+#### (b) `ghswarm run` log / daemon log
 
-**Right after `prpilot run` in the same session**, the background task's stderr (log) is the primary source. Look for these lines:
+**Right after `ghswarm run` in the same session**, the background task's stderr (log) is the primary source. Look for these lines:
 
 - `Issue #<N> -> <action>: <detail>` — the step just before the stop (`failed` / `blocked`, etc.; `cli.py`'s `rlog.info`)
 - `running tests: <command>` — the resolved verify command (`executor.run_tests`'s log output)
 
-Only when `prpilot loop` is resident can you also refer to the daemon log:
+Only when `ghswarm loop` is resident can you also refer to the daemon log:
 
 ```bash
-ls -t ~/.prpilot/prpilot-*.log | head -1   # pick the most recent date file
-grep -E "Issue #<N>|running tests:" ~/.prpilot/prpilot-YYYY-MM-DD.log | tail -20
+ls -t ~/.ghswarm/ghswarm-*.log | head -1   # pick the most recent date file
+grep -E "Issue #<N>|running tests:" ~/.ghswarm/ghswarm-YYYY-MM-DD.log | tail -20
 ```
 
 If loop is not running and you did not run in the same session, rely mainly on Issue comments and reproducing verify in the worktree.
 
 #### (c) Identify the worktree
 
-The worktree path depends on the `worktree_dir` setting and does not appear in `prpilot config`. **Identify the work branch's actual path with `git worktree list --porcelain`**:
+The worktree path depends on the `worktree_dir` setting and does not appear in `ghswarm config`. **Identify the work branch's actual path with `git worktree list --porcelain`**:
 
 ```bash
-cfg=$(prpilot config)
+cfg=$(ghswarm config)
 branch_prefix=$(jq -r '.branch_prefix' <<<"$cfg")
 target_branch="${branch_prefix}<N>"
 
@@ -197,11 +197,11 @@ git worktree list --porcelain | awk -v b="$target_branch" '
 '
 ```
 
-If not found, prpilot has not created a worktree yet (a pre-start `spec_missing`, etc.). Check with `PRPILOT_STATE.branch_name` and the repository in the `path` setting.
+If not found, ghswarm has not created a worktree yet (a pre-start `spec_missing`, etc.). Check with `GHSWARM_STATE.branch_name` and the repository in the `path` setting.
 
 #### (d) Reproduce verify
 
-**The actual verify is the spec front-matter `verify:`** (takes precedence over config `test_command`). Read the spec at `PRPILOT_STATE.spec_path` within the worktree and reproduce the command that actually ran:
+**The actual verify is the spec front-matter `verify:`** (takes precedence over config `test_command`). Read the spec at `GHSWARM_STATE.spec_path` within the worktree and reproduce the command that actually ran:
 
 ```bash
 # assume the worktree path is in WT and spec_path is already obtained from STATE
@@ -221,7 +221,7 @@ else:
     print(str(v).strip())
 ")
 
-# run with the worktree as cwd (same conditions as prpilot)
+# run with the worktree as cwd (same conditions as ghswarm)
 if [ -z "$verify_cmd" ]; then
   echo "local verification skipped (verify / test_command not set)"
 else
@@ -229,7 +229,7 @@ else
 fi
 ```
 
-If the spec has no `verify` and it falls back to config's `test_command`, refer to the relevant repo entry in `~/.prpilot.yaml`. If both are empty, local verification was being skipped (`run_tests` exits 0).
+If the spec has no `verify` and it falls back to config's `test_command`, refer to the relevant repo entry in `~/.ghswarm.yaml`. If both are empty, local verification was being skipped (`run_tests` exits 0).
 
 **In repos with `sandbox.driver: docker`**, verify runs inside a Docker container (`executor.make_runner`). The manual reproduction above is a shell on the host, so **the local reproduction may diverge from the result** (presence of dependency packages, paths, permissions, etc.). In docker-mode repos, also consider the docker execution environment when isolating the failure cause.
 
@@ -261,13 +261,13 @@ Cautions during remediation:
 
 ### 3. Return to idle
 
-**Order: adjust the body `PRPILOT_STATE` (if applicable) → change the label from `blocked` to `idle`**. Verify-failure types need no counter adjustment, but clear `last_notified_reason` for all reasons.
+**Order: adjust the body `GHSWARM_STATE` (if applicable) → change the label from `blocked` to `idle`**. Verify-failure types need no counter adjustment, but clear `last_notified_reason` for all reasons.
 
-#### 3-1. Adjust PRPILOT_STATE
+#### 3-1. Adjust GHSWARM_STATE
 
-Strictly preserve the `PRPILOT_STATE_START` / `PRPILOT_STATE_END` markers and other fields, and **edit only the target fields in place**. Do not do a full replacement or delete the markers.
+Strictly preserve the `GHSWARM_STATE_START` / `GHSWARM_STATE_END` markers and other fields, and **edit only the target fields in place**. Do not do a full replacement or delete the markers.
 
-**Common to all reasons**: clear `last_notified_reason` to `null` (to avoid Notifier suppression when it re-blocks for the same reason). `phase` stays `"blocked"` from a label change alone, but is overwritten on the next successful `prpilot run`.
+**Common to all reasons**: clear `last_notified_reason` to `null` (to avoid Notifier suppression when it re-blocks for the same reason). `phase` stays `"blocked"` from a label change alone, but is overwritten on the next successful `ghswarm run`.
 
 ```bash
 # example: reset transient_retries to 0 (reason=transient_exhausted)
@@ -279,11 +279,11 @@ import re, json, sys
 path = "/tmp/issue-body.md"
 body = open(path).read()
 m = re.search(
-    r'(<!-- PRPILOT_STATE_START\n)(.*?)(\nPRPILOT_STATE_END -->)',
+    r'(<!-- GHSWARM_STATE_START\n)(.*?)(\nGHSWARM_STATE_END -->)',
     body, re.DOTALL
 )
 if not m:
-    sys.exit("PRPILOT_STATE not found")
+    sys.exit("GHSWARM_STATE not found")
 state = json.loads(m.group(2))
 state["last_notified_reason"] = None    # clear for all reasons
 state["transient_retries"] = 0          # field to change depending on reason
@@ -302,7 +302,7 @@ Even for verify-failure types where counter adjustment is unnecessary, run just 
 #### 3-2. Return the label blocked → idle
 
 ```bash
-cfg=$(prpilot config)
+cfg=$(ghswarm config)
 idle=$(jq -r '.idle_label' <<<"$cfg")
 blocked=$(jq -r '.blocked_label' <<<"$cfg")
 
@@ -313,19 +313,19 @@ gh issue edit <N> --remove-label "$blocked" --add-label "$idle"
 # if busy-* or completed remain, --remove-label them individually (rescue from crash remnants)
 ```
 
-If `prpilot config` is unavailable, use the fallback `status: blocked` / `status: idle`.
+If `ghswarm config` is unavailable, use the fallback `status: blocked` / `status: idle`.
 
 #### 3-3. Guidance for immediate resume
 
 ```bash
 # when loop is not running (add -r <ALIAS> for multiple repos). Enough if you idle-ized in step 3-2
-prpilot run <N>
+ghswarm run <N>
 
 # when the blocked label remains / after budget_exhausted / clarification (wait_for_clarification)
-prpilot run <N> --resume
+ghswarm run <N> --resume
 ```
 
-If loop is running (via `pgrep -fl "prpilot loop"`), tell them that idle-izing alone is enough for it to be picked up on the next poll.
+If loop is running (via `pgrep -fl "ghswarm loop"`), tell them that idle-izing alone is enough for it to be picked up on the next poll.
 
 ### 4. Report
 
@@ -335,11 +335,11 @@ Report the following concisely to the user (no need to enumerate commands):
 - The diagnosis result (cause of the verify failure, whether a counter cap was hit, etc.)
 - The remediation performed (worktree fix content, counter adjustment, spec commit, etc.)
 - Whether you returned to idle / kept blocked and why
-- How to resume (loop auto-pickup / `prpilot run` / `--resume` / additional human work)
+- How to resume (loop auto-pickup / `ghswarm run` / `--resume` / additional human work)
 
 ## Out of scope (things not to do)
 
-- Changing prpilot's own (Python) code
+- Changing ghswarm's own (Python) code
 - Diagnosis across other repositories
 - Automatic bulk recovery of blocked
 - Force push, history rewriting, closing Issues

@@ -12,8 +12,8 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 
-STATE_START = "<!-- PRPILOT_STATE_START"
-STATE_END = "PRPILOT_STATE_END -->"
+STATE_START = "<!-- GHSWARM_STATE_START"
+STATE_END = "GHSWARM_STATE_END -->"
 _STATE_RE = re.compile(
     re.escape(STATE_START) + r"\s*(.*?)\s*" + re.escape(STATE_END),
     re.DOTALL,

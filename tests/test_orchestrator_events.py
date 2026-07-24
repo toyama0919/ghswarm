@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from prpilot import state as st
-from prpilot.config import AgentConfig, LabelConfig, RepoConfig
-from prpilot.events import EventLog
-from prpilot.github import Issue
-from prpilot.orchestrator import Orchestrator
+from ghswarm import state as st
+from ghswarm.config import AgentConfig, LabelConfig, RepoConfig
+from ghswarm.events import EventLog
+from ghswarm.github import Issue
+from ghswarm.orchestrator import Orchestrator
 
 BODY = """## Tasks
 
@@ -63,7 +63,7 @@ def _orch(
     db_path: Path,
     issue_max_agent_runs: int = 10,
 ) -> Orchestrator:
-    monkeypatch.setattr("prpilot.labels.current_host", lambda: "test-host")
+    monkeypatch.setattr("ghswarm.labels.current_host", lambda: "test-host")
 
     orch = Orchestrator.__new__(Orchestrator)
     orch.cfg = RepoConfig(

@@ -1,14 +1,14 @@
 """Command-line interface.
 
-  prpilot config [-r ALIAS]          Print the current repo's resolved config as JSON
-  prpilot init                       Write a config file template (~/.prpilot.yaml)
-  prpilot run 42 -r a                Run Issue #42 to completion (done) for a repo
-  prpilot run 42 --step              Advance Issue #42 by a single step
-  prpilot run 42 --resume            Resume an Issue awaiting clarification
-  prpilot loop                       Poll all repositories in parallel (long-running)
-  prpilot status                     List the Issue state for the target repositories
+  ghswarm config [-r ALIAS]          Print the current repo's resolved config as JSON
+  ghswarm init                       Write a config file template (~/.ghswarm.yaml)
+  ghswarm run 42 -r a                Run Issue #42 to completion (done) for a repo
+  ghswarm run 42 --step              Advance Issue #42 by a single step
+  ghswarm run 42 --resume            Resume an Issue awaiting clarification
+  ghswarm loop                       Poll all repositories in parallel (long-running)
+  ghswarm status                     List the Issue state for the target repositories
 
-Config is centralized in the home file ~/.prpilot.yaml. Select an alias with `-r` / `--repo`.
+Config is centralized in the home file ~/.ghswarm.yaml. Select an alias with `-r` / `--repo`.
 """
 
 from __future__ import annotations
@@ -36,12 +36,12 @@ from .github import GitHub, GitHubError, detect_default_branch
 from .logging_utils import get_logger, get_repo_logger, setup_logging
 from .orchestrator import Orchestrator
 
-log = get_logger("prpilot.cli")
+log = get_logger("ghswarm.cli")
 
 _stop_event = threading.Event()
 
-CONFIG_TEMPLATE = files("prpilot") / "config.example.yaml"
-DEFAULT_CONFIG_PATH = Path.home() / ".prpilot.yaml"
+CONFIG_TEMPLATE = files("ghswarm") / "config.example.yaml"
+DEFAULT_CONFIG_PATH = Path.home() / ".ghswarm.yaml"
 
 
 def _load(args) -> AppConfig:
@@ -188,8 +188,8 @@ def _target_issues(cfg: RepoConfig, gh: GitHub):
         assignee=t.assignee,
         milestone=t.milestone,
     )
-    # Issues created via the prpilot-spec skill carry at least idle. Exclude any Issue
-    # with no status label as unmanaged by prpilot (judged from the labels: config values,
+    # Issues created via the ghswarm-spec skill carry at least idle. Exclude any Issue
+    # with no status label as unmanaged by ghswarm (judged from the labels: config values,
     # not dependent on the literal "status:" string).
     managed = [i for i in issues if any(cfg.labels.is_status_label(lb) for lb in i.labels)]
     # Issue numbers increase monotonically, so ascending number = oldest first. Start with the oldest.
@@ -441,7 +441,7 @@ def _resolve_activity_dir_for_stop(app: AppConfig, repo_aliases: list[str] | Non
             return resolve_activity_dir(repos[0].activity_dir)
     except ConfigError:
         pass
-    return resolve_activity_dir("~/.prpilot/activity")
+    return resolve_activity_dir("~/.ghswarm/activity")
 
 
 def _format_stop_activity_line(entry: activity.ActivityEntry, dot_count: int) -> str:
@@ -496,7 +496,7 @@ def _wait_for_daemon_stop(
 def _stop_and_wait(app, args) -> str:
     pid_before = daemon.read_pid(app.daemon_pid)
     if daemon.stop_daemon(app.daemon_pid):
-        log.info("Sent SIGTERM to the prpilot daemon (pid=%d)", pid_before)
+        log.info("Sent SIGTERM to the ghswarm daemon (pid=%d)", pid_before)
         activity_dir = _resolve_activity_dir_for_stop(app, getattr(args, "repos", None))
         try:
             _wait_for_daemon_stop(
@@ -509,7 +509,7 @@ def _stop_and_wait(app, args) -> str:
                 ),
             )
             print(
-                f"✔ prpilot daemon stopped (pid={pid_before})",
+                f"✔ ghswarm daemon stopped (pid={pid_before})",
                 flush=True,
             )
             return "stopped"
@@ -522,7 +522,7 @@ def _stop_and_wait(app, args) -> str:
     if pid_before is not None:
         log.info("Removed a stale PID file: %s", app.daemon_pid)
         return "absent"
-    log.info("No prpilot daemon is running")
+    log.info("No ghswarm daemon is running")
     return "absent"
 
 
@@ -570,7 +570,7 @@ def cmd_loop(args) -> int:
             return 1
         running = daemon.already_running(app.daemon_pid)
         if running is not None:
-            log.error("prpilot daemon is already running (pid=%d)", running)
+            log.error("ghswarm daemon is already running (pid=%d)", running)
             return 1
         log_path = daemon.dated_log_path(app.daemon_log, datetime.now().strftime("%Y-%m-%d"))
         daemon.daemonize(log_path, app.daemon_pid)
@@ -702,7 +702,7 @@ def cmd_history(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="prpilot", description="GitHub Issue-driven development PM agent"
+        prog="ghswarm", description="GitHub Issue-driven development PM agent"
     )
     p.add_argument("-c", "--config", help="path to the config file")
     p.add_argument("-v", "--verbose", action="store_true", help="debug logging")

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-import prpilot.orchestrator as orchestrator
-from prpilot.config import (
+import ghswarm.orchestrator as orchestrator
+from ghswarm.config import (
     AppConfig,
     ConfigError,
     LabelConfig,
@@ -42,7 +42,7 @@ def _write_config(
 ) -> str:
     repo_path = path or str(tmp_path / "repo")
     (tmp_path / "repo").mkdir(exist_ok=True)
-    config_path = tmp_path / "prpilot.yaml"
+    config_path = tmp_path / "ghswarm.yaml"
     body = f"""\
 max_parallel_repos: 3
 {top_extra}defaults:
@@ -58,7 +58,7 @@ repositories:
 
 
 def _write_raw(tmp_path, body: str) -> str:
-    path = tmp_path / "prpilot.yaml"
+    path = tmp_path / "ghswarm.yaml"
     path.write_text(textwrap.dedent(body), encoding="utf-8")
     return str(path)
 
@@ -100,13 +100,13 @@ def test_worktree_dir_explicit(tmp_path):
 
 
 def test_resolve_worktree_dir_default_uses_repo_root_sibling():
-    repo_root = Path("/Users/x/github/prpilot")
+    repo_root = Path("/Users/x/github/ghswarm")
     resolved = resolve_worktree_dir("", repo_root)
-    assert resolved == Path("/Users/x/github/prpilot-worktrees")
+    assert resolved == Path("/Users/x/github/ghswarm-worktrees")
 
 
 def test_resolve_worktree_dir_relative_is_based_on_repo_root():
-    repo_root = Path("/Users/x/github/prpilot")
+    repo_root = Path("/Users/x/github/ghswarm")
     resolved = resolve_worktree_dir("../custom-worktrees", repo_root)
     assert resolved == Path("/Users/x/github/custom-worktrees")
 
@@ -600,12 +600,12 @@ def test_load_config_uses_home_only(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
 
     config = _write_config(home, alias="main")
-    # home helper writes to home/prpilot.yaml but _write_config uses tmp_path
+    # home helper writes to home/ghswarm.yaml but _write_config uses tmp_path
     # rewrite explicitly
-    home_config = home / ".prpilot.yaml"
+    home_config = home / ".ghswarm.yaml"
     home_config.write_text(Path(config).read_text(), encoding="utf-8")
 
-    (repo / ".prpilot.yml").write_text("repositories: {}\n", encoding="utf-8")
+    (repo / ".ghswarm.yml").write_text("repositories: {}\n", encoding="utf-8")
 
     app = load_config()
     assert app.source_path == home_config
@@ -617,8 +617,8 @@ def test_load_config_prefers_yaml_over_yml_in_home(tmp_path, monkeypatch):
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
 
-    yml = home / ".prpilot.yml"
-    yaml = home / ".prpilot.yaml"
+    yml = home / ".ghswarm.yml"
+    yaml = home / ".ghswarm.yaml"
     yml.write_text(
         textwrap.dedent(
             f"""
@@ -722,19 +722,19 @@ def test_repo_config_has_name_alias(tmp_path):
 def test_daemon_paths_default(tmp_path):
     app = load_config(_write_config(tmp_path))
     home = Path.home()
-    assert app.daemon_log == str(home / ".prpilot" / "prpilot.log")
-    assert app.daemon_pid == str(home / ".prpilot" / "prpilot.pid")
+    assert app.daemon_log == str(home / ".ghswarm" / "ghswarm.log")
+    assert app.daemon_pid == str(home / ".ghswarm" / "ghswarm.pid")
 
 
 def test_daemon_paths_override(tmp_path):
     app = load_config(
         _write_config(
             tmp_path,
-            top_extra=('daemon_log: "/var/log/prpilot.log"\ndaemon_pid: "/var/run/prpilot.pid"\n'),
+            top_extra=('daemon_log: "/var/log/ghswarm.log"\ndaemon_pid: "/var/run/ghswarm.pid"\n'),
         )
     )
-    assert app.daemon_log == "/var/log/prpilot.log"
-    assert app.daemon_pid == "/var/run/prpilot.pid"
+    assert app.daemon_log == "/var/log/ghswarm.log"
+    assert app.daemon_pid == "/var/run/ghswarm.pid"
 
 
 def test_daemon_paths_expanduser(tmp_path, monkeypatch):
@@ -742,11 +742,11 @@ def test_daemon_paths_expanduser(tmp_path, monkeypatch):
     app = load_config(
         _write_config(
             tmp_path,
-            top_extra=('daemon_log: "~/logs/prpilot.log"\ndaemon_pid: "~/run/prpilot.pid"\n'),
+            top_extra=('daemon_log: "~/logs/ghswarm.log"\ndaemon_pid: "~/run/ghswarm.pid"\n'),
         )
     )
-    assert app.daemon_log == str(tmp_path / "logs" / "prpilot.log")
-    assert app.daemon_pid == str(tmp_path / "run" / "prpilot.pid")
+    assert app.daemon_log == str(tmp_path / "logs" / "ghswarm.log")
+    assert app.daemon_pid == str(tmp_path / "run" / "ghswarm.pid")
 
 
 # -- event_db ---------------------------------------------------------------
@@ -754,7 +754,7 @@ def test_daemon_paths_expanduser(tmp_path, monkeypatch):
 
 def test_event_db_default(tmp_path):
     app = load_config(_write_config(tmp_path))
-    assert _repo(app).event_db == "~/.prpilot/events.db"
+    assert _repo(app).event_db == "~/.ghswarm/events.db"
 
 
 def test_event_db_from_defaults(tmp_path):
@@ -971,7 +971,7 @@ def test_sandbox_loads_all_fields(tmp_path):
         - GH_TOKEN
         - GITHUB_TOKEN
       volumes:
-        - prpilot-cache:/cache
+        - ghswarm-cache:/cache
       isolate_dirs:
         - .venv
         - ./node_modules/
@@ -984,7 +984,7 @@ def test_sandbox_loads_all_fields(tmp_path):
     assert sb.user == "1000:1000"
     assert sb.env == {"npm_config_cache": "/cache/npm"}
     assert sb.env_passthrough == ["GH_TOKEN", "GITHUB_TOKEN"]
-    assert sb.volumes == ["prpilot-cache:/cache"]
+    assert sb.volumes == ["ghswarm-cache:/cache"]
     assert sb.isolate_dirs == [".venv", "node_modules"]
 
 

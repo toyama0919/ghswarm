@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from prpilot import state as st
-from prpilot.config import AgentConfig, RepoConfig, LabelConfig
-from prpilot.executor import ExecResult
-from prpilot.github import Issue
-from prpilot.orchestrator import Orchestrator
+from ghswarm import state as st
+from ghswarm.config import AgentConfig, RepoConfig, LabelConfig
+from ghswarm.executor import ExecResult
+from ghswarm.github import Issue
+from ghswarm.orchestrator import Orchestrator
 
 BODY = """## Task breakdown
 
@@ -71,10 +71,10 @@ def _orchestrator(
     monkeypatch, body: str, *, exec_result: ExecResult, tmp_path: Path | None = None
 ) -> Orchestrator:
     monkeypatch.setattr(
-        "prpilot.orchestrator.execute_with_self_healing",
+        "ghswarm.orchestrator.execute_with_self_healing",
         lambda *a, **k: exec_result,
     )
-    monkeypatch.setattr("prpilot.orchestrator.lbl.acquire", lambda *a, **k: None)
+    monkeypatch.setattr("ghswarm.orchestrator.lbl.acquire", lambda *a, **k: None)
 
     if tmp_path is not None:
         _write_spec(tmp_path)

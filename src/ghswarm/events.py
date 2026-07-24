@@ -13,9 +13,9 @@ from .logging_utils import get_logger
 if TYPE_CHECKING:
     from .orchestrator import StepResult
 
-log = get_logger("prpilot.events")
+log = get_logger("ghswarm.events")
 
-_DEFAULT_EVENT_DB = "~/.prpilot/events.db"
+_DEFAULT_EVENT_DB = "~/.ghswarm/events.db"
 _DETAIL_MAX = 500
 
 

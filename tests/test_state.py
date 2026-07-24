@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prpilot import state as st
+from ghswarm import state as st
 
 
 def test_parse_state_default_when_no_block():

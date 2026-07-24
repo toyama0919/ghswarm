@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import prpilot.orchestrator as orch_mod
-from prpilot import state as st
-from prpilot.config import AgentConfig, RepoConfig
-from prpilot.executor import ConflictResolveResult
-from prpilot.github import Issue, PRStatus
-from prpilot.orchestrator import Orchestrator
+import ghswarm.orchestrator as orch_mod
+from ghswarm import state as st
+from ghswarm.config import AgentConfig, RepoConfig
+from ghswarm.executor import ConflictResolveResult
+from ghswarm.github import Issue, PRStatus
+from ghswarm.orchestrator import Orchestrator
 
 
 class FakeGitHub:

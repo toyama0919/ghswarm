@@ -36,5 +36,5 @@ class RepoLogAdapter(logging.LoggerAdapter):
         return f"{prefix}{msg}", kwargs
 
 
-def get_repo_logger(alias: str, name: str = "prpilot.cli") -> RepoLogAdapter:
+def get_repo_logger(alias: str, name: str = "ghswarm.cli") -> RepoLogAdapter:
     return RepoLogAdapter(get_logger(name), {"repo": alias})
