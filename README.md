@@ -14,12 +14,17 @@ checkboxes) and in spec files. Even if the process dies, reading the Issue lets 
 
 ## Two-line architecture
 
-```
-Line 1 (human in the loop / skill: prpilot-spec)   ← outside the loop
-  draft in tmp/spec/ → AI review → human review → create Issue → move spec into .specs/ and open draft PR
-
-Line 2 (prpilot's resident loop / autonomous)       ← this CLI
-  implement on the same PR branch → AI review → mark PR ready → wait for CI/approve → auto squash merge
+```mermaid
+flowchart LR
+  subgraph L1["Line 1 — human in the loop (skill: prpilot-spec, outside the loop)"]
+    direction LR
+    A1["draft in tmp/spec/"] --> A2["AI review"] --> A3["human review"] --> A4["create Issue"] --> A5["move spec into .specs/<br/>& open draft PR"]
+  end
+  subgraph L2["Line 2 — prpilot's resident loop (autonomous, this CLI)"]
+    direction LR
+    B1["implement on same PR branch"] --> B2["AI review"] --> B3["mark PR ready"] --> B4["wait for CI/approve"] --> B5["auto squash merge"]
+  end
+  L1 --> L2
 ```
 
 - **Line 1** is handled by the Claude Code skill [`prpilot-spec`](.claude/skills/prpilot-spec/SKILL.md).
@@ -56,15 +61,23 @@ Line 2 (prpilot's resident loop / autonomous)       ← this CLI
 
 ## State machine (Line 2)
 
-```
-start ─▶ implement ─(tasks remain)▶ implement
-              │(tasks done)
-              ▼
-          ai_review ─▶ create_pr ─▶ wait_ci ─(CI green + approve)▶ verify_merge ─(post-merge CI green)▶ done(closed)
-              │                        │(CI failed)          │(post-merge CI failed)
-        (spec unclear) ▼                ▼                     ▼
-   wait_for_clarification            blocked (human step-in) ◀──────┘
-     (blocked) ──(answer + --resume)──▶ implement
+```mermaid
+stateDiagram-v2
+    [*] --> implement
+    implement --> implement: tasks remain
+    implement --> ai_review: tasks done
+    implement --> wait_for_clarification: spec unclear
+    ai_review --> create_pr
+    create_pr --> wait_ci
+    wait_ci --> verify_merge: CI green + approve
+    wait_ci --> blocked: CI failed
+    verify_merge --> done: post-merge CI green
+    verify_merge --> blocked: post-merge CI failed
+    wait_for_clarification --> implement: answer + --resume
+    done --> [*]
+
+    note right of wait_for_clarification : status\: blocked
+    note right of blocked : human step-in
 ```
 
 ## Installation
