@@ -15,14 +15,14 @@ checkboxes) and in spec files. Even if the process dies, reading the Issue lets 
 ## Two-line architecture
 
 ```mermaid
-flowchart LR
-  subgraph L1["Line 1 — human in the loop (skill: prpilot-spec, outside the loop)"]
+flowchart TB
+  subgraph L1["Line 1 · human in the loop (skill: prpilot-spec, outside the loop)"]
     direction LR
-    A1["draft in tmp/spec/"] --> A2["AI review"] --> A3["human review"] --> A4["create Issue"] --> A5["move spec into .specs/<br/>& open draft PR"]
+    A1[draft in tmp/spec/] --> A2[AI review] --> A3[human review] --> A4[create Issue] --> A5[move to .specs/<br/>+ open draft PR]
   end
-  subgraph L2["Line 2 — prpilot's resident loop (autonomous, this CLI)"]
+  subgraph L2["Line 2 · prpilot resident loop (autonomous, this CLI)"]
     direction LR
-    B1["implement on same PR branch"] --> B2["AI review"] --> B3["mark PR ready"] --> B4["wait for CI/approve"] --> B5["auto squash merge"]
+    B1[implement on PR branch] --> B2[AI review] --> B3[mark PR ready] --> B4[wait CI/approve] --> B5[auto squash merge]
   end
   L1 --> L2
 ```
@@ -63,21 +63,21 @@ flowchart LR
 
 ```mermaid
 stateDiagram-v2
+    state "wait_for_clarification (status: blocked)" as clarify
+    state "blocked (human step-in)" as blocked
+
     [*] --> implement
     implement --> implement: tasks remain
     implement --> ai_review: tasks done
-    implement --> wait_for_clarification: spec unclear
+    implement --> clarify: spec unclear
     ai_review --> create_pr
     create_pr --> wait_ci
     wait_ci --> verify_merge: CI green + approve
     wait_ci --> blocked: CI failed
     verify_merge --> done: post-merge CI green
     verify_merge --> blocked: post-merge CI failed
-    wait_for_clarification --> implement: answer + --resume
+    clarify --> implement: answer + --resume
     done --> [*]
-
-    note right of wait_for_clarification : status\: blocked
-    note right of blocked : human step-in
 ```
 
 ## Installation
