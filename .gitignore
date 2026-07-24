@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+# environment-specific local config (template is config.example.yaml)
+.prpilot.yml
+.prpilot.yaml
+# spec drafts (prpilot-spec skill)
+tmp/
+.envrc

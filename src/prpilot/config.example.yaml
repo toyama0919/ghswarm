@@ -1,0 +1,94 @@
+# prpilot config file (template)
+# Copied to ~/.prpilot.yaml by `prpilot init`.
+# Lookup order: --config <path> > ~/.prpilot.yaml > ~/.prpilot.yml
+#
+# Declare multiple repositories under `repositories` and select one with -r <alias>.
+# Put shared settings under `defaults`; override per-repository in each entry.
+
+max_parallel_repos: 3        # Max number of repos to run concurrently (global)
+
+daemon_log: ~/.prpilot/prpilot.log   # Log base path for `loop -d` (start date is inserted into the filename)
+daemon_pid: ~/.prpilot/prpilot.pid   # PID file for `loop -d`
+
+# event_db: ~/.prpilot/events.db    # Structured event log (SQLite). Empty string disables it
+
+defaults:                    # Shared fallback for all repos (optional)
+  poll_interval: 60
+  merge_method: squash
+  require_approval: true
+  agents:
+    implement:
+      command:
+        - "cursor-agent -p {prompt} --model auto"
+        - "claude -p {prompt} --model opus --dangerously-skip-permissions"
+    review:
+      command: "claude -p {prompt} --model sonnet --dangerously-skip-permissions"
+  labels:
+    idle: "status: idle"
+    blocked: "status: blocked"
+    completed: "status: completed"
+    busy_prefix: "status: busy-"
+  target:
+    labels:
+      - "pm-agent"
+    assignee: ""
+    milestone: ""
+  question_file: ".agent_question.md"
+  branch_prefix: "issue-"
+  spec_dir: ".specs"
+  base_branch: ""
+  test_command: ""
+  address_pr_reviews: true
+  delete_branch_on_merge: true
+  post_merge_ci: true
+  post_merge_ci_grace: 180
+  worktree_dir: ""
+  worktree_setup: ""
+  # sandbox:                         # Run setup/verify inside Docker (opt-in)
+  #   driver: none                   # none (default) | docker
+  #   image: node:22-bookworm        # Required when driver=docker
+  #   network: default               # default | none
+  #   user: auto                     # auto = $(id -u):$(id -g) / "1000:1000" / "" to omit --user
+  #   env:                           # Environment variables inside the container (HOME defaults to /tmp)
+  #     npm_config_cache: /cache/npm
+  #   env_passthrough: [GH_TOKEN, GITHUB_TOKEN]
+  #   volumes:
+  #     - prpilot-cache:/cache
+  #   isolate_dirs:                  # Isolate this path in the worktree via a container-only writable mount
+  #     - .venv                      # Python (uv). Use node_modules for node, target for rust
+  transient_error_patterns:
+    - "resource_exhausted"
+    - "RetriableError"
+    - "Connection lost"
+    - "reconnecting"
+    - "rate limit"
+    - "Too Many Requests"
+    - "overloaded"
+    - "ECONNRESET"
+    - "temporarily unavailable"
+    - "\\b(429|503)\\b"
+  transient_max_retries: 5
+  auto_resolve_conflicts: true
+  conflict_max_retries: 3
+  auto_fix_ci: true
+  ci_fix_max_retries: 3
+  # Cap on cumulative agent runs per Issue (0 disables it = unlimited)
+  issue_max_agent_runs: 10
+  lock_ttl: 14400
+  # event_db: ~/.prpilot/events.db   # Structured event log. Empty string disables it
+  # env:                              # Environment variables for gh calls shared by all repos (overridable per repo)
+  #   GH_CONFIG_DIR: ~/.config/gh-work
+  notify:
+    macos: false
+    # on_completed: true          # Push notification on merge completion (default true)
+    # slack_webhook_url: "${SLACK_WEBHOOK_URL}"
+
+repositories:                # Mapping keyed by alias (select with -r <alias>)
+  main:
+    repo: owner/your-repo     # GitHub owner/repo (required)
+    path: ~/src/your-repo     # Path to the local clone (required)
+    base_branch: ""           # Empty means auto-detect via gh
+    worktree_dir: "../your-repo-worktrees"
+    worktree_setup: "uv venv && uv pip install -e '.[dev]' -q"
+    # env:                            # Environment variables injected into gh calls for this repo
+    #   GH_CONFIG_DIR: ~/.config/gh-work
