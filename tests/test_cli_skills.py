@@ -8,7 +8,7 @@ import ghswarm.cli as cli
 
 # Only user-facing skills are bundled in the package. Maintainer-only skills such as
 # ghswarm-release live under the repo's .claude/skills and are not shipped.
-_BUNDLED = {"ghswarm-spec", "ghswarm-check"}
+_BUNDLED = {"ghswarm-spec", "ghswarm-check", "ghswarm-requirements"}
 
 
 def _args(*, project=False, dir=None, force=False):
