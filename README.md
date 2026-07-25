@@ -83,10 +83,44 @@ stateDiagram-v2
 ## Installation
 
 ```bash
-cd ghswarm && pip install -e .
+uv tool install ghswarm      # recommended (isolated CLI install)
+# or: pipx install ghswarm
+# or: pip install ghswarm
+```
+
+From source (for development):
+
+```bash
+git clone https://github.com/toyama0919/ghswarm && cd ghswarm && uv sync --extra dev
 ```
 
 Prerequisites: `gh` (already `gh auth login`ed), and each coding CLI you use being authenticated and able to run headless.
+
+### Claude Code skills
+
+ghswarm ships its user-facing Claude Code skills with the package, so they always match the
+installed CLI version. Install them into Claude Code with:
+
+```bash
+ghswarm skills install            # -> ~/.claude/skills (available in any repo)
+ghswarm skills install --project  # -> ./.claude/skills (this repo only)
+ghswarm skills install --force    # overwrite/update already-installed skills
+```
+
+- `ghswarm-spec` — Line 1: draft a spec, review it, create the Issue and draft spec PR.
+- `ghswarm-check` — diagnose Issues stuck at `status: blocked` and return safe ones to `idle`.
+
+Re-run `ghswarm skills install --force` after upgrading ghswarm to pull in the latest skill versions.
+
+From a checkout you can also install them with the [`skills`](https://github.com/vercel-labs/skills) CLI:
+
+```bash
+npx skills add ./ghswarm --skill ghswarm-spec --skill ghswarm-check --agent claude-code
+```
+
+Maintainer-only skills (e.g. `ghswarm-release`, which publishes ghswarm itself to PyPI) are **not**
+shipped with the package. They live under this repository's `.claude/skills/` and are available
+automatically as project-scoped skills when working inside the ghswarm repo.
 
 ## Setup
 

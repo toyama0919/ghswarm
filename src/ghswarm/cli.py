@@ -16,13 +16,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import signal
 import sys
 import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, wait
 from datetime import datetime, timezone
-from importlib.resources import files
+from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Callable
 
@@ -41,6 +42,7 @@ log = get_logger("ghswarm.cli")
 _stop_event = threading.Event()
 
 CONFIG_TEMPLATE = files("ghswarm") / "config.example.yaml"
+SKILLS_SOURCE = files("ghswarm") / "skills"
 DEFAULT_CONFIG_PATH = Path.home() / ".ghswarm.yaml"
 
 
@@ -178,6 +180,51 @@ def cmd_init(args) -> int:
     dest.write_text(template, encoding="utf-8")
     log.info("Created config file template: %s", dest)
     print(f"Please edit it: {dest}")
+    return 0
+
+
+def cmd_skills_install(args) -> int:
+    """Copy the bundled Claude Code skills into a .claude/skills directory.
+
+    The skills are shipped as package data, so the installed version always matches
+    the installed CLI. --global (default) targets ~/.claude/skills so they are
+    available regardless of cwd; --project targets ./.claude/skills.
+    """
+    if args.dir:
+        dest_root = Path(args.dir).expanduser()
+    elif args.project:
+        dest_root = Path.cwd() / ".claude" / "skills"
+    else:
+        dest_root = Path.home() / ".claude" / "skills"
+
+    installed: list[str] = []
+    skipped: list[str] = []
+    try:
+        with as_file(SKILLS_SOURCE) as src_root:
+            skill_dirs = sorted(p for p in Path(src_root).iterdir() if p.is_dir())
+            if not skill_dirs:
+                log.error("No bundled skills found at %s", src_root)
+                return 1
+            dest_root.mkdir(parents=True, exist_ok=True)
+            for skill_dir in skill_dirs:
+                dest = dest_root / skill_dir.name
+                if dest.exists() and not args.force:
+                    skipped.append(skill_dir.name)
+                    continue
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.copytree(skill_dir, dest)
+                installed.append(skill_dir.name)
+    except (OSError, FileNotFoundError) as e:
+        log.error("Failed to install skills: %s", e)
+        return 1
+
+    for name in installed:
+        print(f"Installed skill: {name} -> {dest_root / name}")
+    for name in skipped:
+        print(f"Skipped (exists, use --force to overwrite): {name}")
+    if not installed and skipped:
+        log.info("All skills already present. Re-run with --force to update them.")
     return 0
 
 
@@ -783,6 +830,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_repo_arg(pc)
     pc.set_defaults(func=cmd_config)
+
+    pk = sub.add_parser(
+        "skills",
+        help="manage the bundled Claude Code skills (ghswarm-spec / -check / -release)",
+        description="manage the bundled Claude Code skills",
+    )
+    ksub = pk.add_subparsers(dest="skills_command", required=True)
+    ki = ksub.add_parser(
+        "install",
+        help="copy the bundled skills into a .claude/skills directory",
+        description=(
+            "Copy the bundled skills into ~/.claude/skills (default) or ./.claude/skills "
+            "(--project). The skills ship with the package, so they always match this CLI version."
+        ),
+    )
+    kg = ki.add_mutually_exclusive_group()
+    kg.add_argument(
+        "--global",
+        dest="project",
+        action="store_false",
+        help="install into ~/.claude/skills (default; available regardless of cwd)",
+    )
+    kg.add_argument(
+        "--project",
+        dest="project",
+        action="store_true",
+        help="install into ./.claude/skills of the current directory",
+    )
+    ki.add_argument("--dir", help="install into an explicit directory instead")
+    ki.add_argument(
+        "-f", "--force", action="store_true", help="overwrite skills that already exist"
+    )
+    ki.set_defaults(func=cmd_skills_install, project=False)
 
     return p
 
