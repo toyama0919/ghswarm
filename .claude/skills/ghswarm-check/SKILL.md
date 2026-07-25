@@ -64,15 +64,17 @@ State is saved as JSON inside the `<!-- GHSWARM_STATE_START` … `GHSWARM_STATE_
 | `clarification` | No counter needed | Awaiting clarification. `--resume` after an answer |
 | `merge_ci_failed` / `git_error` / `pr_create_failed` | No counter needed | Often requires human judgment |
 
-### verify command resolution order (`spec.py` / `_test_command_for`)
+### verify step resolution (`spec.py` / `orchestrator._verify_steps_for`)
 
-The verify that runs in the implement, review, conflict-resolution, and CI-fix phases is resolved in the following priority:
+The verify that runs in the implement, review, conflict-resolution, and CI-fix phases is a **sequence of steps**, assembled per Issue:
 
-1. **The spec front-matter `verify:`** (reads the file `GHSWARM_STATE.spec_path` points to, within the worktree)
-2. config's `test_command` (does not appear in `ghswarm config`; refer to the repo's config YAML)
-3. empty → local verification skipped (CI alone is the gate)
+1. **The spec front-matter `verify:`** (reads the file `GHSWARM_STATE.spec_path` points to, within the worktree) supplies the steps to run, via `Spec.verify_steps`:
+   - Legacy form (a string, or a list of strings) normalizes to a single path-less step; each element of a list is wrapped in a subshell `(...)` and joined with ` && `.
+   - New form (a list of `{path, command}` mappings) becomes one step per entry, each scoped to `path` (a worktree-relative subdirectory).
+2. Each step's execution environment (local vs. Docker, image, etc.) is resolved from **config's `verify:` registry** via `VerifyConfig.sandbox_for(step.path)` (does not appear in `ghswarm config`; refer to the repo's config YAML): single form uses that one `sandbox` for every step regardless of `path`; list form matches by exact `path`, falling back to `driver: none` when no entry matches.
+3. If the spec has no `verify` (or an empty list), there are **zero steps** → local verification is skipped (CI alone is the gate). Config's `verify:` never carries a command by itself, so it cannot provide a fallback verify command anymore.
 
-A list-form `verify` wraps each element in a subshell `(...)` and joins with ` && `. A string form is run as-is as a single command.
+Steps run in order and **stop at the first failure**; each step's timeout is applied per step (not shared across steps).
 
 ### Immediate resume methods
 
@@ -171,7 +173,7 @@ Comments starting with `⚠️` / `🚫` hold clues to the reason (`reason=max_r
 **Right after `ghswarm run` in the same session**, the background task's stderr (log) is the primary source. Look for these lines:
 
 - `Issue #<N> -> <action>: <detail>` — the step just before the stop (`failed` / `blocked`, etc.; `cli.py`'s `rlog.info`)
-- `running tests: <command>` — the resolved verify command (`executor.run_tests`'s log output)
+- `running verify step [<path or (root)>]: <command>` — each resolved verify step, in order (`executor.run_verify_steps`'s log output)
 
 Only when `ghswarm loop` is resident can you also refer to the daemon log:
 
@@ -201,37 +203,53 @@ If not found, ghswarm has not created a worktree yet (a pre-start `spec_missing`
 
 #### (d) Reproduce verify
 
-**The actual verify is the spec front-matter `verify:`** (takes precedence over config `test_command`). Read the spec at `GHSWARM_STATE.spec_path` within the worktree and reproduce the command that actually ran:
+**The actual verify is the spec front-matter `verify:`**, run as an ordered list of steps (stop at the first failure). Config's `verify:` never carries a command — it only supplies each step's execution environment (sandbox) by matching `path`. Read the spec at `GHSWARM_STATE.spec_path` within the worktree and reproduce the steps that actually ran:
 
 ```bash
 # assume the worktree path is in WT and spec_path is already obtained from STATE
 spec_file="$WT/<spec_path>"   # e.g. $WT/.specs/2026-07-22-issue-86.md
 
-# extract the verify command (a list is normalized the same as subshell joining)
-verify_cmd=$(python3 -c "
+# extract the verify steps as "<path or (root)>\t<command>" lines.
+# legacy form (string / list of strings) normalizes to one path-less step, joined
+# the same way ghswarm does (each element wrapped in a subshell and `&&`-joined).
+python3 -c "
 import yaml, re, sys
 text = open('$spec_file').read()
 m = re.match(r'---\n(.*?)\n---', text, re.S)
 meta = yaml.safe_load(m.group(1)) if m else {}
-v = meta.get('verify', '')
-if isinstance(v, list):
+v = meta.get('verify')
+steps = []
+if not v:
+    pass
+elif isinstance(v, str):
+    if v.strip():
+        steps = [(None, v.strip())]
+elif all(isinstance(x, str) for x in v):
     parts = [str(x).strip() for x in v if str(x).strip()]
-    print(' && '.join(f'({p})' for p in parts))
+    if parts:
+        steps = [(None, ' && '.join(f'({p})' for p in parts))]
 else:
-    print(str(v).strip())
-")
+    steps = [(x['path'], x['command']) for x in v]
+for path, command in steps:
+    print(f'{path or \"(root)\"}\t{command}')
+" > /tmp/verify-steps.tsv
 
-# run with the worktree as cwd (same conditions as ghswarm)
-if [ -z "$verify_cmd" ]; then
-  echo "local verification skipped (verify / test_command not set)"
+if [ ! -s /tmp/verify-steps.tsv ]; then
+  echo "local verification skipped (spec has no verify:)"
 else
-  cd "$WT" && eval "$verify_cmd"
+  # run each step in order under $WT/<path> (or $WT itself for (root)), stop at
+  # the first failure — same semantics as executor.run_verify_steps
+  while IFS=$'\t' read -r path command; do
+    dir="$WT"; [ "$path" != "(root)" ] && dir="$WT/$path"
+    echo "--- verify step [$path] ---"
+    (cd "$dir" && eval "$command") || break
+  done < /tmp/verify-steps.tsv
 fi
 ```
 
-If the spec has no `verify` and it falls back to config's `test_command`, refer to the relevant repo entry in `~/.ghswarm.yaml`. If both are empty, local verification was being skipped (`run_tests` exits 0).
+If the spec has no `verify:`, local verification is always skipped now (config's `verify:` cannot supply a fallback command — it only resolves the sandbox for a given `path`, e.g. via `~/.ghswarm.yaml`'s repo entry).
 
-**In repos with `sandbox.driver: docker`**, verify runs inside a Docker container (`executor.make_runner`). The manual reproduction above is a shell on the host, so **the local reproduction may diverge from the result** (presence of dependency packages, paths, permissions, etc.). In docker-mode repos, also consider the docker execution environment when isolating the failure cause.
+**For any step whose `path` (or path-less/root) resolves to `sandbox.driver: docker`** in config's `verify:`, that step actually runs inside a Docker container (`orchestrator._verify_steps_for` + `sandbox.make_runner`/`DockerRunner`, with the whole worktree mounted and only the container's working directory set to `path`). The manual reproduction above is a shell on the host, so **the local reproduction may diverge from the result** (presence of dependency packages, paths, permissions, etc.). In docker-mode repos, also consider the docker execution environment when isolating the failure cause.
 
 For verify-failure types (`implement_failed` / `review_failed`), this reproduction is the **center of diagnosis**. Cross-reference it with the failure logs in run's log / comments to pin down the root cause.
 
