@@ -128,9 +128,7 @@ def test_daemonize_prints_grandchild_pid(tmp_path):
     # so point the subprocess at src/ the same way pytest's own pythonpath does.
     src_dir = str(Path(daemon.__file__).resolve().parent.parent)
     env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join(
-        filter(None, [src_dir, env.get("PYTHONPATH")])
-    )
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [src_dir, env.get("PYTHONPATH")]))
 
     code = f"""
 import os
