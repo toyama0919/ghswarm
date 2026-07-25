@@ -122,7 +122,6 @@ def _orch(
     orch.worktree_dir = Path("/tmp/worktrees")
     orch.worktree_setup = ""
     orch.base_branch = "main"
-    orch.test_command = ""
     orch.dry_run = dry_run
     orch.agent_names = ["implement", "review"]
     orch._event_log = EventLog("")
@@ -223,7 +222,7 @@ def test_resolve_conflict_clean_merge_does_not_increment_total_agent_runs(monkey
     orch = _orch(monkeypatch, gh)
     orch._persist = lambda issue, state: None
     orch._record_busy_lease = lambda issue, state: None
-    orch._test_command_for = lambda state, worktree: ""
+    orch._verify_steps_for = lambda state, worktree: []
     orch._spec_block = lambda state, worktree: ""
     wt = FakeWorktreeGit()
     wt.try_push = lambda branch: True

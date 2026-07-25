@@ -270,9 +270,12 @@ verify:
       image: python:3.12
 """
 
-_VERIFY_MIGRATION_EXAMPLE = """'test_command' / top-level 'sandbox' have been removed. Migrate to 'verify:'.
+_VERIFY_MIGRATION_EXAMPLE = (
+    """'test_command' / top-level 'sandbox' have been removed. Migrate to 'verify:'.
 The command itself now belongs in each spec's frontmatter 'verify:', not in config.
-""" + _VERIFY_EXAMPLE
+"""
+    + _VERIFY_EXAMPLE
+)
 
 
 def _normalize_commands(raw: Any, path: Path, phase: str) -> list[str]:

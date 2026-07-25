@@ -292,7 +292,9 @@ def test_run_worktree_setup_uses_runner(monkeypatch, tmp_path):
     calls: list[tuple[str, str, str | None, int]] = []
 
     class _StubRunner:
-        def run(self, command: str, mount_root: str, workdir: str | None, timeout: int) -> tuple[int, str]:
+        def run(
+            self, command: str, mount_root: str, workdir: str | None, timeout: int
+        ) -> tuple[int, str]:
             calls.append((command, mount_root, workdir, timeout))
             return 0, "setup ok"
 
@@ -343,7 +345,9 @@ def test_run_worktree_setup_continues_on_failure(monkeypatch, tmp_path):
     from ghswarm.config import AgentConfig, RepoConfig
 
     class _FailRunner:
-        def run(self, command: str, mount_root: str, workdir: str | None, timeout: int) -> tuple[int, str]:
+        def run(
+            self, command: str, mount_root: str, workdir: str | None, timeout: int
+        ) -> tuple[int, str]:
             return 1, "setup failed"
 
     monkeypatch.setattr(orchestrator, "make_runner", lambda sandbox: _FailRunner())

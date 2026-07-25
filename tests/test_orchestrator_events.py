@@ -82,7 +82,6 @@ def _orch(
     orch.worktree_dir = Path("/tmp/worktrees")
     orch.worktree_setup = ""
     orch.base_branch = "main"
-    orch.test_command = ""
     orch.dry_run = dry_run
     orch.agent_names = ["implement", "review"]
     orch._event_log = EventLog(str(db_path))

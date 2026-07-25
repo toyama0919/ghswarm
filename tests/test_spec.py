@@ -110,16 +110,12 @@ def test_new_form_returns_one_step_per_entry():
 
 
 def test_new_form_single_entry():
-    spec = parse_spec(
-        "---\nverify:\n  - path: backend\n    command: pytest -q\n---\n# x\n"
-    )
+    spec = parse_spec("---\nverify:\n  - path: backend\n    command: pytest -q\n---\n# x\n")
     assert spec.verify_steps == [VerifyStep(path="backend", command="pytest -q")]
 
 
 def test_new_form_normalizes_path():
-    spec = parse_spec(
-        "---\nverify:\n  - path: ./backend/\n    command: pytest\n---\n# x\n"
-    )
+    spec = parse_spec("---\nverify:\n  - path: ./backend/\n    command: pytest\n---\n# x\n")
     assert spec.verify_steps == [VerifyStep(path="backend", command="pytest")]
 
 
@@ -164,12 +160,7 @@ def test_new_form_rejects_empty_path():
 
 def test_mixing_legacy_and_new_forms_raises_config_error():
     spec = parse_spec(
-        "---\n"
-        "verify:\n"
-        "  - echo ok\n"
-        "  - path: backend\n"
-        "    command: pytest\n"
-        "---\n# x\n"
+        "---\nverify:\n  - echo ok\n  - path: backend\n    command: pytest\n---\n# x\n"
     )
     with pytest.raises(ConfigError, match="mix"):
         spec.verify_steps
