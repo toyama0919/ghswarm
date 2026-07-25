@@ -17,9 +17,12 @@ from pathlib import Path
 from .config import AgentConfig, RepoConfig
 from .git_ops import Git
 from .logging_utils import get_logger
-from .sandbox import LocalRunner, ShellRunner, make_runner
+from .sandbox import ShellRunner
 
 log = get_logger("ghswarm.exec")
+
+# Header used for a path-less (legacy) verify step's output.
+ROOT_STEP_LABEL = "(root)"
 
 
 def is_transient(output: str, patterns: list[str]) -> bool:
@@ -132,29 +135,54 @@ def run_cli(
     return last_code, "".join(outputs)
 
 
-def run_tests(
-    test_command: str,
-    cwd: str,
+@dataclass
+class ResolvedStep:
+    """A verify step with its execution environment already resolved.
+
+    path is the step's worktree-relative subdirectory (None for a legacy, path-less
+    step); runner determines local vs. Docker execution.
+    """
+
+    path: str | None
+    command: str
+    runner: ShellRunner
+
+
+def run_verify_steps(
+    steps: list[ResolvedStep],
+    worktree: str,
     timeout: int = 1800,
-    *,
-    runner: ShellRunner | None = None,
 ) -> tuple[int, str]:
-    if not test_command.strip():
-        return 0, "(no test command configured; skipping verification)"
-    log.info("running tests: %s", test_command)
-    if runner is None:
-        runner = LocalRunner()
-    try:
-        return runner.run(test_command, cwd, timeout)
-    except subprocess.TimeoutExpired:
-        return 124, "ERROR: tests timed out"
+    """Run resolved verify steps in order, stopping at the first failure.
+
+    Zero steps is treated as success (mirrors the old "empty verify command skips
+    verification" behavior). Each step's output is concatenated with a header
+    identifying its path (a path-less step uses "(root)"). On failure, the combined
+    log includes steps up to and including the failing one, not the ones after it.
+    """
+    if not steps:
+        return 0, "(no verify steps configured; skipping verification)"
+
+    combined = ""
+    for step in steps:
+        label = step.path or ROOT_STEP_LABEL
+        log.info("running verify step [%s]: %s", label, step.command)
+        try:
+            code, output = step.runner.run(step.command, worktree, step.path, timeout)
+        except subprocess.TimeoutExpired:
+            code, output = 124, f"ERROR: verify step [{label}] timed out ({timeout}s)"
+        combined += f"\n--- verify step [{label}] ---\n{output}\n"
+        if code != 0:
+            return code, combined
+
+    return 0, combined
 
 
 def execute_with_self_healing(
     cfg: RepoConfig,
     agent: AgentConfig,
     git: Git,
-    test_command: str,
+    verify_steps: list[ResolvedStep],
     base_prompt: str,
     on_question,
 ) -> ExecResult:
@@ -186,7 +214,7 @@ def execute_with_self_healing(
             )
             return ExecResult(False, combined, attempt, reason="cli_failed")
 
-        test_code, test_output = run_tests(test_command, git.cwd, runner=make_runner(cfg.sandbox))
+        test_code, test_output = run_verify_steps(verify_steps, git.cwd)
         if test_code == 0:
             return ExecResult(True, combined, attempt)
 
@@ -216,7 +244,7 @@ def resolve_conflict_with_agent(
     cfg: RepoConfig,
     agent: AgentConfig,
     git: Git,
-    test_command: str,
+    verify_steps: list[ResolvedStep],
     base: str,
     branch: str,
     prompt_header: str,
@@ -258,7 +286,7 @@ def resolve_conflict_with_agent(
         git.abort_merge()
         return ConflictResolveResult(False, reason="markers_remain", output=combined, attempts=1)
 
-    test_code, test_output = run_tests(test_command, git.cwd, runner=make_runner(cfg.sandbox))
+    test_code, test_output = run_verify_steps(verify_steps, git.cwd)
     combined += f"\n--- verify ---\n{test_output}\n"
     if test_code != 0:
         git.abort_merge()
@@ -271,7 +299,7 @@ def fix_ci_with_agent(
     cfg: RepoConfig,
     agent: AgentConfig,
     git: Git,
-    test_command: str,
+    verify_steps: list[ResolvedStep],
     branch: str,
     prompt_header: str,
     ci_logs: str,
@@ -299,7 +327,7 @@ def fix_ci_with_agent(
             return ExecResult(False, combined, 1, reason="transient")
         return ExecResult(False, combined, 1, reason="cli_failed")
 
-    test_code, test_output = run_tests(test_command, git.cwd, runner=make_runner(cfg.sandbox))
+    test_code, test_output = run_verify_steps(verify_steps, git.cwd)
     combined += f"\n--- verify ---\n{test_output}\n"
     if test_code != 0:
         if is_transient(test_output, cfg.transient_error_patterns):

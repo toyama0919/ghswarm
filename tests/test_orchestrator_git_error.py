@@ -103,7 +103,6 @@ def _orch(monkeypatch, gh: FakeGitHub) -> tuple[Orchestrator, FakeNotifier]:
     orch.worktree_dir = Path("/tmp/worktrees")
     orch.worktree_setup = ""
     orch.base_branch = "nonexistent-base"
-    orch.test_command = ""
     orch.dry_run = False
     orch.agent_names = ["implement", "review"]
     orch._event_log = EventLog("")

@@ -106,7 +106,6 @@ def _orch_with_notify(monkeypatch, *, notify: NotifyConfig | None = None) -> Orc
     orch.worktree_dir = Path("/tmp/worktrees")
     orch.worktree_setup = ""
     orch.base_branch = "main"
-    orch.test_command = ""
     orch.dry_run = False
     orch.agent_names = ["implement", "review"]
     orch._event_log = EventLog("")
@@ -172,7 +171,7 @@ def test_implement_failed_triggers_slack_post(urlopen, monkeypatch, tmp_path):
     orch._ensure_worktree_git = lambda number, branch: wt
     orch._record_busy_lease = lambda issue, state: None
     orch._persist = lambda issue, state: None
-    orch._test_command_for = lambda state, worktree: ""
+    orch._verify_steps_for = lambda state, worktree: []
     orch._spec_block = lambda state, worktree: ""
     issue = orch.gh.get_issue(42)
     state = st.IssueState(branch_name="issue-42", next_action="implement", spec_path=SPEC_PATH)
@@ -209,7 +208,6 @@ def test_ci_failed_without_auto_fix_triggers_slack_post(urlopen):
     orch.worktree_dir = Path("/tmp/worktrees")
     orch.worktree_setup = ""
     orch.base_branch = "main"
-    orch.test_command = ""
     orch.dry_run = False
     orch.agent_names = ["implement"]
     orch._notifier = Notifier.from_config(orch.cfg.notify)

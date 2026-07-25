@@ -20,7 +20,12 @@ from . import questions as q
 from . import state as st
 from .config import RepoConfig, resolve_worktree_dir
 from .events import EventLog, resolve_event_db_path
-from .executor import execute_with_self_healing, fix_ci_with_agent, resolve_conflict_with_agent
+from .executor import (
+    ResolvedStep,
+    execute_with_self_healing,
+    fix_ci_with_agent,
+    resolve_conflict_with_agent,
+)
 from .git_ops import Git, GitError
 from .github import GitHub, Issue, PRStatus, ReviewItem, detect_default_branch
 from .logging_utils import get_logger
@@ -56,7 +61,6 @@ class Orchestrator:
         self.base_branch = cfg.base_branch or detect_default_branch(self.repo_root, env=cfg.env)
         self.worktree_dir = resolve_worktree_dir(cfg.worktree_dir, Path(self.repo_root))
         self.worktree_setup = cfg.worktree_setup
-        self.test_command = cfg.test_command
         self.dry_run = dry_run
         self.agent_names = cfg.agent_names()
         self._notifier: Notifier | None = None
@@ -94,9 +98,9 @@ class Orchestrator:
         if not cmd:
             return
         log.info("running worktree setup: %s", cmd)
-        runner = make_runner(self.cfg.sandbox)
+        runner = make_runner(self.cfg.verify.sandbox_for(None))
         try:
-            code, out = runner.run(cmd, path, timeout=600)
+            code, out = runner.run(cmd, path, None, timeout=600)
         except subprocess.TimeoutExpired:
             log.warning("worktree setup timed out (600s): %s", cmd)
             return
@@ -289,7 +293,7 @@ class Orchestrator:
             self.cfg,
             agent,
             wt,
-            self._test_command_for(state, wt.cwd),
+            self._verify_steps_for(state, wt.cwd),
             prompt,
             on_question,
         )
@@ -389,7 +393,7 @@ class Orchestrator:
             return q.check_question_file(wt.cwd, self.cfg.question_file) is not None
 
         result = execute_with_self_healing(
-            self.cfg, agent, wt, self._test_command_for(state, wt.cwd), prompt, on_question
+            self.cfg, agent, wt, self._verify_steps_for(state, wt.cwd), prompt, on_question
         )
         state.iteration += 1
         state.total_agent_runs += result.attempts
@@ -591,7 +595,7 @@ class Orchestrator:
             return q.check_question_file(wt.cwd, self.cfg.question_file) is not None
 
         result = execute_with_self_healing(
-            self.cfg, agent, wt, self._test_command_for(state, wt.cwd), prompt, on_question
+            self.cfg, agent, wt, self._verify_steps_for(state, wt.cwd), prompt, on_question
         )
         state.iteration += 1
         state.total_agent_runs += result.attempts
@@ -656,7 +660,7 @@ class Orchestrator:
             self.cfg,
             agent,
             wt,
-            self._test_command_for(state, wt.cwd),
+            self._verify_steps_for(state, wt.cwd),
             self.base_branch,
             state.branch_name,
             prompt_header,
@@ -775,7 +779,7 @@ class Orchestrator:
             self.cfg,
             agent,
             wt,
-            self._test_command_for(state, wt.cwd),
+            self._verify_steps_for(state, wt.cwd),
             state.branch_name,
             prompt_header,
             ci_logs,
@@ -1047,17 +1051,22 @@ class Orchestrator:
             return Spec()
         return parse_spec(path.read_text(encoding="utf-8"))
 
-    def _test_command_for(self, state: st.IssueState, worktree: str) -> str:
-        """Resolve the verification command for this task.
+    def _verify_steps_for(self, state: st.IssueState, worktree: str) -> list[ResolvedStep]:
+        """Resolve the spec's verify_steps into steps with cwd/runner already attached.
 
-        Precedence: the spec front matter's verify > config's test_command > empty
-        (= skip verification). The language and tooling are up to the spec, and the
-        real test suite is left to CI.
+        Each step's execution environment comes from config's VerifyConfig.sandbox_for,
+        matched by the step's path (None for a legacy, path-less step). If the spec has
+        no verify (or an empty list), this returns an empty list (= skip verification).
         """
-        cmd = self._load_spec(state, worktree).verify_command
-        if cmd:
-            return cmd
-        return self.test_command
+        steps = self._load_spec(state, worktree).verify_steps
+        return [
+            ResolvedStep(
+                path=step.path,
+                command=step.command,
+                runner=make_runner(self.cfg.verify.sandbox_for(step.path)),
+            )
+            for step in steps
+        ]
 
     def _persist(self, issue: Issue, state: st.IssueState) -> None:
         fresh = self.gh.get_issue(issue.number)

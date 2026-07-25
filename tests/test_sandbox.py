@@ -80,9 +80,18 @@ def test_ensure_docker_unavailable_when_daemon_down(monkeypatch):
 
 def test_local_runner_executes_command(tmp_path):
     runner = LocalRunner()
-    code, output = runner.run("echo hello-local", str(tmp_path), timeout=30)
+    code, output = runner.run("echo hello-local", str(tmp_path), None, timeout=30)
     assert code == 0
     assert "hello-local" in output
+
+
+def test_local_runner_uses_workdir_under_mount_root(tmp_path):
+    sub = tmp_path / "backend"
+    sub.mkdir()
+    runner = LocalRunner()
+    code, output = runner.run("pwd", str(tmp_path), "backend", timeout=30)
+    assert code == 0
+    assert output.strip() == str(sub.resolve())
 
 
 def test_docker_runner_builds_expected_args(monkeypatch, tmp_path):
@@ -108,7 +117,7 @@ def test_docker_runner_builds_expected_args(monkeypatch, tmp_path):
         volumes=["ghswarm-cache:/cache"],
     )
     runner = DockerRunner(sandbox)
-    args, name = runner._build_run_command("npm test", str(cwd))
+    args, name = runner._build_run_command("npm test", str(cwd), None)
 
     assert args[:3] == ["docker", "run", "--rm"]
     assert "--user" in args and "1000:1001" in args
@@ -128,6 +137,31 @@ def test_docker_runner_builds_expected_args(monkeypatch, tmp_path):
     assert name.startswith("ghswarm-sbx-")
 
 
+def test_docker_runner_mounts_whole_worktree_with_per_path_workdir(monkeypatch, tmp_path):
+    """A step scoped to a subdirectory still mounts the whole worktree; only -w changes."""
+    cwd = tmp_path / "worktree"
+    cwd.mkdir()
+    monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd_arg: None)
+
+    runner = DockerRunner(SandboxConfig(driver="docker", image="alpine"))
+    args, _ = runner._build_run_command("pytest", str(cwd), "backend")
+
+    # The mount is still the whole worktree (not worktree/backend).
+    assert f"{cwd.resolve()}:/workspace" in args
+    assert f"{cwd.resolve() / 'backend'}:/workspace" not in args
+    # Only the container's working directory reflects the step's path.
+    w_idx = args.index("-w")
+    assert args[w_idx + 1] == "/workspace/backend"
+
+
+def test_docker_runner_workdir_none_uses_workspace_root(monkeypatch, tmp_path):
+    monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd_arg: None)
+    runner = DockerRunner(SandboxConfig(driver="docker", image="alpine"))
+    args, _ = runner._build_run_command("true", str(tmp_path), None)
+    w_idx = args.index("-w")
+    assert args[w_idx + 1] == "/workspace"
+
+
 def test_docker_runner_injects_git_safe_directory_env(monkeypatch, tmp_path):
     """The docker run args include GIT_CONFIG_* for git safe.directory.
 
@@ -135,7 +169,7 @@ def test_docker_runner_injects_git_safe_directory_env(monkeypatch, tmp_path):
     """
     monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
     runner = DockerRunner(SandboxConfig(driver="docker", image="alpine"))
-    args, _ = runner._build_run_command("true", str(tmp_path))
+    args, _ = runner._build_run_command("true", str(tmp_path), None)
 
     assert "GIT_CONFIG_COUNT=1" in args
     assert "GIT_CONFIG_KEY_0=safe.directory" in args
@@ -152,7 +186,7 @@ def test_docker_runner_git_safe_directory_env_overridable(monkeypatch, tmp_path)
         env={"GIT_CONFIG_VALUE_0": "/workspace"},
     )
     runner = DockerRunner(sandbox)
-    args, _ = runner._build_run_command("true", str(tmp_path))
+    args, _ = runner._build_run_command("true", str(tmp_path), None)
 
     assert "GIT_CONFIG_VALUE_0=/workspace" in args
     assert "GIT_CONFIG_VALUE_0=*" not in args
@@ -161,7 +195,7 @@ def test_docker_runner_git_safe_directory_env_overridable(monkeypatch, tmp_path)
 def test_docker_runner_network_none(monkeypatch, tmp_path):
     monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
     runner = DockerRunner(SandboxConfig(driver="docker", image="alpine", network="none"))
-    args, _ = runner._build_run_command("true", str(tmp_path))
+    args, _ = runner._build_run_command("true", str(tmp_path), None)
     idx = args.index("--network")
     assert args[idx + 1] == "none"
 
@@ -169,7 +203,7 @@ def test_docker_runner_network_none(monkeypatch, tmp_path):
 def test_docker_runner_skips_user_when_empty(monkeypatch, tmp_path):
     monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
     runner = DockerRunner(SandboxConfig(driver="docker", image="alpine", user=""))
-    args, _ = runner._build_run_command("true", str(tmp_path))
+    args, _ = runner._build_run_command("true", str(tmp_path), None)
     assert "--user" not in args
 
 
@@ -180,12 +214,22 @@ def test_docker_runner_isolate_dirs_adds_tmpfs_mount(monkeypatch, tmp_path):
     """
     monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
     runner = DockerRunner(SandboxConfig(driver="docker", image="alpine", isolate_dirs=[".venv"]))
-    args, _ = runner._build_run_command("true", str(tmp_path))
+    args, _ = runner._build_run_command("true", str(tmp_path), None)
 
     tmpfs_idx = args.index("--tmpfs")
     assert args[tmpfs_idx + 1] == "/workspace/.venv:exec,mode=1777"
     assert "exec" in args[tmpfs_idx + 1]
     assert "mode=1777" in args[tmpfs_idx + 1]
+
+
+def test_docker_runner_isolate_dirs_stay_mount_root_relative_with_workdir(monkeypatch, tmp_path):
+    """isolate_dirs stay relative to the mount root even when workdir scopes to a subdirectory."""
+    monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
+    runner = DockerRunner(SandboxConfig(driver="docker", image="alpine", isolate_dirs=[".venv"]))
+    args, _ = runner._build_run_command("true", str(tmp_path), "backend")
+
+    tmpfs_idx = args.index("--tmpfs")
+    assert args[tmpfs_idx + 1] == "/workspace/.venv:exec,mode=1777"
 
 
 def test_docker_runner_isolate_dirs_multiple_dirs(monkeypatch, tmp_path):
@@ -197,7 +241,7 @@ def test_docker_runner_isolate_dirs_multiple_dirs(monkeypatch, tmp_path):
             isolate_dirs=[".venv", "node_modules", "a/b"],
         )
     )
-    args, _ = runner._build_run_command("true", str(tmp_path))
+    args, _ = runner._build_run_command("true", str(tmp_path), None)
 
     tmpfs_mounts = [args[i + 1] for i, arg in enumerate(args) if arg == "--tmpfs"]
     assert tmpfs_mounts == [
@@ -210,7 +254,7 @@ def test_docker_runner_isolate_dirs_multiple_dirs(monkeypatch, tmp_path):
 def test_docker_runner_isolate_dirs_empty_omits_mount(monkeypatch, tmp_path):
     monkeypatch.setattr("ghswarm.sandbox._resolve_git_common_dir", lambda cwd: None)
     runner = DockerRunner(SandboxConfig(driver="docker", image="alpine", isolate_dirs=[]))
-    args, _ = runner._build_run_command("true", str(tmp_path))
+    args, _ = runner._build_run_command("true", str(tmp_path), None)
     assert "--tmpfs" not in args
 
 
@@ -227,7 +271,7 @@ def test_docker_runner_timeout_kills_container(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", fake_run)
     runner = DockerRunner(SandboxConfig(driver="docker", image="alpine"))
     with pytest.raises(subprocess.TimeoutExpired):
-        runner.run("sleep 999", str(tmp_path), timeout=1)
+        runner.run("sleep 999", str(tmp_path), None, timeout=1)
     assert len(killed) == 1
     assert killed[0][0:2] == ["docker", "kill"]
 
@@ -243,13 +287,15 @@ def test_make_runner_docker_hard_fails_without_docker(monkeypatch):
 
 def test_run_worktree_setup_uses_runner(monkeypatch, tmp_path):
     import ghswarm.orchestrator as orchestrator
-    from ghswarm.config import AgentConfig, RepoConfig, SandboxConfig
+    from ghswarm.config import AgentConfig, RepoConfig
 
-    calls: list[tuple[str, str, int]] = []
+    calls: list[tuple[str, str, str | None, int]] = []
 
     class _StubRunner:
-        def run(self, command: str, cwd: str, timeout: int) -> tuple[int, str]:
-            calls.append((command, cwd, timeout))
+        def run(
+            self, command: str, mount_root: str, workdir: str | None, timeout: int
+        ) -> tuple[int, str]:
+            calls.append((command, mount_root, workdir, timeout))
             return 0, "setup ok"
 
     cfg = RepoConfig(
@@ -259,7 +305,6 @@ def test_run_worktree_setup_uses_runner(monkeypatch, tmp_path):
         },
         base_branch="main",
         worktree_setup="echo setup",
-        sandbox=SandboxConfig(),
     )
     monkeypatch.setattr(orchestrator, "make_runner", lambda sandbox: _StubRunner())
     monkeypatch.setattr(orchestrator, "GitHub", lambda repo, env=None: object())
@@ -268,7 +313,7 @@ def test_run_worktree_setup_uses_runner(monkeypatch, tmp_path):
     orch = orchestrator.Orchestrator(cfg)
     path = str(tmp_path)
     orch._run_worktree_setup(path)
-    assert calls == [("echo setup", path, 600)]
+    assert calls == [("echo setup", path, None, 600)]
 
 
 def test_run_worktree_setup_skips_empty_command(monkeypatch):
@@ -300,7 +345,9 @@ def test_run_worktree_setup_continues_on_failure(monkeypatch, tmp_path):
     from ghswarm.config import AgentConfig, RepoConfig
 
     class _FailRunner:
-        def run(self, command: str, cwd: str, timeout: int) -> tuple[int, str]:
+        def run(
+            self, command: str, mount_root: str, workdir: str | None, timeout: int
+        ) -> tuple[int, str]:
             return 1, "setup failed"
 
     monkeypatch.setattr(orchestrator, "make_runner", lambda sandbox: _FailRunner())

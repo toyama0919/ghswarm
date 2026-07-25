@@ -76,6 +76,30 @@ class SandboxConfig:
 
 
 @dataclass
+class VerifyConfig:
+    """Path -> SandboxConfig registry resolved from RepoConfig's `verify:` block.
+
+    Single form (a `verify:` mapping with only `sandbox`) is represented by `single`
+    and applies to every path regardless of what is asked. List form (a `verify:` list
+    of `{path, sandbox}` entries) is matched by exact `path` via `entries`. If `verify:`
+    is unset (both empty), `sandbox_for` falls back to the default SandboxConfig
+    (driver: none) for every path.
+    """
+
+    single: SandboxConfig | None = None
+    entries: list[tuple[str, SandboxConfig]] = field(default_factory=list)
+
+    def sandbox_for(self, path: str | None) -> SandboxConfig:
+        if self.single is not None:
+            return self.single
+        if path is not None:
+            for entry_path, sandbox in self.entries:
+                if entry_path == path:
+                    return sandbox
+        return SandboxConfig()
+
+
+@dataclass
 class LabelConfig:
     idle: str = "status: idle"
     blocked: str = "status: blocked"
@@ -118,7 +142,6 @@ class RepoConfig:
     spec_dir: str = ".specs"
     # branch the PR merges into. Work branches are also cut from here. Auto-detected via gh if empty.
     base_branch: str = ""
-    test_command: str = ""  # skip test verification if empty
     merge_method: str = "squash"  # squash / merge / rebase
     require_approval: bool = True  # require PR review approval for auto-merge
     # whether to automatically pick up review comments on the PR (both humans and
@@ -161,7 +184,9 @@ class RepoConfig:
     activity_dir: str = "~/.ghswarm/activity"
     # env vars injected into this repo's gh invocations (overrides os.environ per key).
     env: dict[str, str] = field(default_factory=dict)
-    sandbox: SandboxConfig = field(default_factory=SandboxConfig)
+    # path -> sandbox registry used to run verify steps (see VerifyConfig). Never
+    # carries a command; the steps to run come from the spec frontmatter.
+    verify: VerifyConfig = field(default_factory=VerifyConfig)
 
     def agent_names(self) -> list[str]:
         """Return all phase names. Used as the targets for label cleanup and lock checks."""
@@ -215,17 +240,42 @@ agents:
 """
 
 _SANDBOX_EXAMPLE = """Example fix:
-sandbox:
-  driver: docker
-  image: node:22-bookworm
-  network: default
+verify:
+  sandbox:
+    driver: docker
+    image: node:22-bookworm
+    network: default
 """
 
 _SANDBOX_ISOLATE_DIRS_EXAMPLE = """Example fix:
-sandbox:
-  isolate_dirs:
-    - .venv
+verify:
+  sandbox:
+    isolate_dirs:
+      - .venv
 """
+
+_VERIFY_EXAMPLE = """Example fix (single form, whole repo):
+verify:
+  sandbox:
+    driver: none   # also the default when omitted
+
+Example fix (list form, monorepo path -> sandbox registry):
+verify:
+  - path: terraform
+    sandbox:
+      driver: none
+  - path: backend
+    sandbox:
+      driver: docker
+      image: python:3.12
+"""
+
+_VERIFY_MIGRATION_EXAMPLE = (
+    """'test_command' / top-level 'sandbox' have been removed. Migrate to 'verify:'.
+The command itself now belongs in each spec's frontmatter 'verify:', not in config.
+"""
+    + _VERIFY_EXAMPLE
+)
 
 
 def _normalize_commands(raw: Any, path: Path, phase: str) -> list[str]:
@@ -387,9 +437,8 @@ def _load_sandbox_env(block: dict[str, Any], source: Path, prefix: str) -> dict[
     return result
 
 
-def _load_sandbox(raw: dict[str, Any], source: Path) -> SandboxConfig:
-    """Normalize the sandbox: block into a SandboxConfig."""
-    block = raw.get("sandbox")
+def _load_sandbox_block(block: Any, source: Path, prefix: str) -> SandboxConfig:
+    """Normalize a sandbox mapping (found at `prefix`) into a SandboxConfig."""
     if not isinstance(block, dict):
         return SandboxConfig()
 
@@ -401,13 +450,13 @@ def _load_sandbox(raw: dict[str, Any], source: Path) -> SandboxConfig:
 
     if driver == "docker" and not image.strip():
         raise ConfigError(
-            f"{source}: 'sandbox.image' is required when 'sandbox.driver: docker' "
+            f"{source}: '{prefix}.image' is required when '{prefix}.driver: docker' "
             f"(empty string is not allowed).\n{_SANDBOX_EXAMPLE}"
         )
 
     if network not in ("default", "none"):
         raise ConfigError(
-            f"{source}: 'sandbox.network' must be 'default' or 'none' "
+            f"{source}: '{prefix}.network' must be 'default' or 'none' "
             f"(got {network!r}).\n{_SANDBOX_EXAMPLE}"
         )
 
@@ -434,10 +483,85 @@ def _load_sandbox(raw: dict[str, Any], source: Path) -> SandboxConfig:
         image=image,
         network=network,
         user=user,
-        env=_load_sandbox_env(block, source, "sandbox"),
+        env=_load_sandbox_env(block, source, prefix),
         env_passthrough=env_passthrough,
         volumes=volumes,
         isolate_dirs=isolate_dirs,
+    )
+
+
+def validate_verify_path(raw: str, context: str) -> str:
+    """Validate and normalize a `verify` registry path (config side or spec side).
+
+    Rejects an empty string, an absolute path, and '..' segments that would escape
+    the worktree. Returns the normalized (posixpath.normpath'd) path.
+    """
+    text = str(raw).strip()
+    if not text:
+        raise ConfigError(f"{context}: 'path' must not be empty.\n{_VERIFY_EXAMPLE}")
+    norm = posixpath.normpath(text)
+    if norm.startswith("/"):
+        raise ConfigError(
+            f"{context}: 'path' must be a worktree-relative path "
+            f"(absolute path {norm!r} is not allowed).\n{_VERIFY_EXAMPLE}"
+        )
+    if ".." in norm.split("/"):
+        raise ConfigError(
+            f"{context}: 'path' must not contain '..' (got {norm!r}).\n{_VERIFY_EXAMPLE}"
+        )
+    return norm
+
+
+def _load_verify(raw: dict[str, Any], source: Path) -> VerifyConfig:
+    """Normalize the verify: block into a VerifyConfig.
+
+    Raises a migration ConfigError if the old 'test_command' / 'sandbox' keys are
+    still present at the top level.
+    """
+    if "test_command" in raw or "sandbox" in raw:
+        raise ConfigError(f"{source}: {_VERIFY_MIGRATION_EXAMPLE}")
+
+    block = raw.get("verify")
+    if block is None:
+        return VerifyConfig()
+
+    if isinstance(block, dict):
+        if "command" in block or "path" in block:
+            raise ConfigError(
+                f"{source}: single-form 'verify:' must only have 'sandbox' "
+                f"('command' / 'path' are not allowed here; commands belong in the spec's "
+                f"frontmatter).\n{_VERIFY_EXAMPLE}"
+            )
+        sandbox = _load_sandbox_block(block.get("sandbox"), source, "verify.sandbox")
+        return VerifyConfig(single=sandbox)
+
+    if isinstance(block, list):
+        entries: list[tuple[str, SandboxConfig]] = []
+        seen: set[str] = set()
+        for i, item in enumerate(block):
+            if not isinstance(item, dict):
+                raise ConfigError(
+                    f"{source}: 'verify[{i}]' must be a mapping with 'path' / 'sandbox'.\n"
+                    f"{_VERIFY_EXAMPLE}"
+                )
+            if "command" in item:
+                raise ConfigError(
+                    f"{source}: 'verify[{i}].command' is not allowed in config; the command "
+                    f"belongs in the spec's frontmatter 'verify:'.\n{_VERIFY_EXAMPLE}"
+                )
+            path = validate_verify_path(item.get("path", ""), f"{source}: 'verify[{i}].path'")
+            if path in seen:
+                raise ConfigError(
+                    f"{source}: duplicate 'verify' path {path!r} (index {i}).\n{_VERIFY_EXAMPLE}"
+                )
+            seen.add(path)
+            sandbox = _load_sandbox_block(item.get("sandbox"), source, f"verify[{i}].sandbox")
+            entries.append((path, sandbox))
+        return VerifyConfig(entries=entries)
+
+    raise ConfigError(
+        f"{source}: 'verify' must be a mapping (single form) or a list (list form).\n"
+        f"{_VERIFY_EXAMPLE}"
     )
 
 
@@ -545,7 +669,6 @@ def _build_repo_config_from_raw(
         branch_prefix=raw.get("branch_prefix", "issue-"),
         spec_dir=raw.get("spec_dir", ".specs"),
         base_branch=raw.get("base_branch", ""),
-        test_command=raw.get("test_command", ""),
         merge_method=raw.get("merge_method", "squash"),
         require_approval=bool(raw.get("require_approval", True)),
         address_pr_reviews=bool(raw.get("address_pr_reviews", True)),
@@ -565,7 +688,7 @@ def _build_repo_config_from_raw(
         event_db=raw.get("event_db", "~/.ghswarm/events.db"),
         activity_dir=raw.get("activity_dir", "~/.ghswarm/activity"),
         env=_load_env(raw, source),
-        sandbox=_load_sandbox(raw, source),
+        verify=_load_verify(raw, source),
     )
 
 

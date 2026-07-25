@@ -92,14 +92,24 @@ def _resolve_git_common_dir(cwd: str) -> str | None:
 
 class ShellRunner(ABC):
     @abstractmethod
-    def run(self, command: str, cwd: str, timeout: int) -> tuple[int, str]:
-        """Run a shell command and return (exit_code, combined_output)."""
+    def run(
+        self, command: str, mount_root: str, workdir: str | None, timeout: int
+    ) -> tuple[int, str]:
+        """Run a shell command and return (exit_code, combined_output).
+
+        mount_root is always the whole worktree (under Docker, the whole worktree is
+        mounted regardless of workdir). workdir is the step's path relative to
+        mount_root (None means mount_root itself).
+        """
 
 
 class LocalRunner(ShellRunner):
     """Runs on the host, equivalent to subprocess.run(shell=True, cwd=...)."""
 
-    def run(self, command: str, cwd: str, timeout: int) -> tuple[int, str]:
+    def run(
+        self, command: str, mount_root: str, workdir: str | None, timeout: int
+    ) -> tuple[int, str]:
+        cwd = str(Path(mount_root) / workdir) if workdir else mount_root
         res = subprocess.run(
             command,
             shell=True,
@@ -112,13 +122,19 @@ class LocalRunner(ShellRunner):
 
 
 class DockerRunner(ShellRunner):
-    """Runs sh -c "<command>" inside docker run --rm."""
+    """Runs sh -c "<command>" inside docker run --rm.
+
+    The whole worktree is always mounted at /workspace; only the container's working
+    directory (-w) changes per step, via workdir.
+    """
 
     def __init__(self, sandbox: SandboxConfig) -> None:
         self._sandbox = sandbox
 
-    def _build_run_command(self, command: str, cwd: str) -> tuple[list[str], str]:
-        cwd_abs = str(Path(cwd).resolve())
+    def _build_run_command(
+        self, command: str, mount_root: str, workdir: str | None
+    ) -> tuple[list[str], str]:
+        mount_root_abs = str(Path(mount_root).resolve())
         args: list[str] = ["docker", "run", "--rm"]
 
         if self._sandbox.user == "auto":
@@ -126,9 +142,10 @@ class DockerRunner(ShellRunner):
         elif self._sandbox.user:
             args.extend(["--user", self._sandbox.user])
 
-        args.extend(["-v", f"{cwd_abs}:/workspace", "-w", "/workspace"])
+        container_workdir = posixpath.join("/workspace", workdir) if workdir else "/workspace"
+        args.extend(["-v", f"{mount_root_abs}:/workspace", "-w", container_workdir])
 
-        git_common = _resolve_git_common_dir(cwd_abs)
+        git_common = _resolve_git_common_dir(mount_root_abs)
         if git_common:
             args.extend(["-v", f"{git_common}:{git_common}"])
 
@@ -161,8 +178,10 @@ class DockerRunner(ShellRunner):
         args.extend([self._sandbox.image, "sh", "-c", command])
         return args, container_name
 
-    def run(self, command: str, cwd: str, timeout: int) -> tuple[int, str]:
-        args, container_name = self._build_run_command(command, cwd)
+    def run(
+        self, command: str, mount_root: str, workdir: str | None, timeout: int
+    ) -> tuple[int, str]:
+        args, container_name = self._build_run_command(command, mount_root, workdir)
         try:
             res = subprocess.run(
                 args,

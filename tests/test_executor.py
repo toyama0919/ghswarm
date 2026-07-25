@@ -1,10 +1,11 @@
-"""Tests for command assembly and test-verification skipping (subprocess is not launched)."""
+"""Tests for command assembly and verify-step execution (subprocess is not launched)."""
 
 from __future__ import annotations
 
 import ghswarm.executor as ex
 from ghswarm.config import AgentConfig, RepoConfig, _DEFAULT_TRANSIENT_ERROR_PATTERNS
 from ghswarm.executor import (
+    ResolvedStep,
     _build_command,
     _has_conflict_markers,
     execute_with_self_healing,
@@ -12,8 +13,27 @@ from ghswarm.executor import (
     is_transient,
     resolve_conflict_with_agent,
     run_cli,
-    run_tests,
+    run_verify_steps,
 )
+
+
+class _StepRunner:
+    """A ShellRunner stub with a fixed (code, output) result, recording its calls."""
+
+    def __init__(self, code: int = 0, output: str = ""):
+        self.code = code
+        self.output = output
+        self.calls: list[tuple[str, str, str | None, int]] = []
+
+    def run(self, command: str, mount_root: str, workdir: str | None, timeout: int):
+        self.calls.append((command, mount_root, workdir, timeout))
+        return self.code, self.output
+
+
+def _steps(command: str = "pytest", path: str | None = None) -> list[ResolvedStep]:
+    """A single-step verify_steps list. The runner is never invoked in tests that
+    monkeypatch ex.run_verify_steps wholesale."""
+    return [ResolvedStep(path=path, command=command, runner=_StepRunner())]
 
 
 def test_build_command_with_placeholder():
@@ -32,10 +52,58 @@ def test_build_command_quotes_shell_metacharacters():
     assert cmd == "run 'a; rm -rf /'"
 
 
-def test_run_tests_skips_when_command_blank():
-    code, output = run_tests("   ", cwd=".")
+# -- run_verify_steps --------------------------------------------------------
+
+
+def test_run_verify_steps_zero_steps_is_success():
+    code, output = run_verify_steps([], worktree=".")
     assert code == 0
     assert "skipping" in output
+
+
+def test_run_verify_steps_runs_in_order_and_concatenates_output():
+    r1 = _StepRunner(0, "step1 out")
+    r2 = _StepRunner(0, "step2 out")
+    steps = [
+        ResolvedStep(path="terraform", command="terraform validate", runner=r1),
+        ResolvedStep(path="backend", command="pytest", runner=r2),
+    ]
+    code, output = run_verify_steps(steps, worktree="/wt")
+    assert code == 0
+    assert output.index("terraform") < output.index("step1 out") < output.index("backend")
+    assert output.index("backend") < output.index("step2 out")
+    assert r1.calls == [("terraform validate", "/wt", "terraform", 1800)]
+    assert r2.calls == [("pytest", "/wt", "backend", 1800)]
+
+
+def test_run_verify_steps_stops_at_first_failure():
+    r1 = _StepRunner(1, "step1 failed")
+    r2 = _StepRunner(0, "should not run")
+    steps = [
+        ResolvedStep(path="a", command="cmd-a", runner=r1),
+        ResolvedStep(path="b", command="cmd-b", runner=r2),
+    ]
+    code, output = run_verify_steps(steps, worktree="/wt")
+    assert code == 1
+    assert "step1 failed" in output
+    assert r2.calls == []  # the second step never runs
+    assert "cmd-b" not in output
+
+
+def test_run_verify_steps_root_step_uses_root_label():
+    r1 = _StepRunner(0, "legacy out")
+    steps = [ResolvedStep(path=None, command="make test", runner=r1)]
+    code, output = run_verify_steps(steps, worktree="/wt")
+    assert code == 0
+    assert "(root)" in output
+    assert r1.calls == [("make test", "/wt", None, 1800)]
+
+
+def test_run_verify_steps_custom_timeout_applies_per_step():
+    r1 = _StepRunner(0, "ok")
+    steps = [ResolvedStep(path=None, command="make test", runner=r1)]
+    run_verify_steps(steps, worktree="/wt", timeout=30)
+    assert r1.calls == [("make test", "/wt", None, 30)]
 
 
 class _SpyGit:
@@ -64,9 +132,9 @@ def _healing(
     test_output="test output",
 ):
     monkeypatch.setattr(ex, "run_cli", lambda *a, **k: (cli_code, cli_output))
-    monkeypatch.setattr(ex, "run_tests", lambda *a, **k: (test_code, test_output))
+    monkeypatch.setattr(ex, "run_verify_steps", lambda *a, **k: (test_code, test_output))
     return execute_with_self_healing(
-        _cfg(), AgentConfig(name="a", commands=["noop"]), git, "pytest", "prompt", lambda: False
+        _cfg(), AgentConfig(name="a", commands=["noop"]), git, _steps(), "prompt", lambda: False
     )
 
 
@@ -287,14 +355,14 @@ def test_verify_transient_failure_skips_self_healing(monkeypatch):
     monkeypatch.setattr(ex, "run_cli", fake_run_cli)
     monkeypatch.setattr(
         ex,
-        "run_tests",
+        "run_verify_steps",
         lambda *a, **k: (1, "pip install failed: network unreachable ECONNRESET"),
     )
     result = execute_with_self_healing(
         _cfg(),
         AgentConfig(name="a", commands=["noop"]),
         _SpyGit(),
-        "pytest",
+        _steps(),
         "prompt",
         lambda: False,
     )
@@ -312,13 +380,15 @@ def test_real_test_failure_enters_self_healing(monkeypatch):
 
     monkeypatch.setattr(ex, "run_cli", fake_run_cli)
     monkeypatch.setattr(
-        ex, "run_tests", lambda *a, **k: (1, "FAILED tests/test_foo.py::test_bar - AssertionError")
+        ex,
+        "run_verify_steps",
+        lambda *a, **k: (1, "FAILED tests/test_foo.py::test_bar - AssertionError"),
     )
     result = execute_with_self_healing(
         _cfg(),
         AgentConfig(name="a", commands=["noop"]),
         _SpyGit(),
-        "pytest",
+        _steps(),
         "prompt",
         lambda: False,
     )
@@ -368,7 +438,7 @@ def test_resolve_conflict_clean_merge_skips_agent(monkeypatch):
     monkeypatch.setattr(ex, "run_cli", fake_run_cli)
     monkeypatch.setattr(
         ex,
-        "run_tests",
+        "run_verify_steps",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("verify must not be called")),
     )
 
@@ -376,7 +446,7 @@ def test_resolve_conflict_clean_merge_skips_agent(monkeypatch):
         _resolve_cfg(),
         AgentConfig(name="implement", commands=["noop"]),
         git,
-        "pytest",
+        _steps(),
         "main",
         "issue-7",
         "header",
@@ -396,13 +466,13 @@ def test_resolve_conflict_agent_success_passes_verify(monkeypatch, tmp_path):
     git.cwd = str(tmp_path)
 
     monkeypatch.setattr(ex, "run_cli", lambda *a, **k: (0, "agent ok"))
-    monkeypatch.setattr(ex, "run_tests", lambda *a, **k: (0, "tests ok"))
+    monkeypatch.setattr(ex, "run_verify_steps", lambda *a, **k: (0, "tests ok"))
 
     result = resolve_conflict_with_agent(
         _resolve_cfg(),
         AgentConfig(name="implement", commands=["noop"]),
         git,
-        "pytest",
+        _steps(),
         "main",
         "issue-7",
         "header",
@@ -421,13 +491,13 @@ def test_resolve_conflict_verify_failure_aborts(monkeypatch, tmp_path):
     git.cwd = str(tmp_path)
 
     monkeypatch.setattr(ex, "run_cli", lambda *a, **k: (0, "agent ok"))
-    monkeypatch.setattr(ex, "run_tests", lambda *a, **k: (1, "FAILED"))
+    monkeypatch.setattr(ex, "run_verify_steps", lambda *a, **k: (1, "FAILED"))
 
     result = resolve_conflict_with_agent(
         _resolve_cfg(),
         AgentConfig(name="implement", commands=["noop"]),
         git,
-        "pytest",
+        _steps(),
         "main",
         "issue-7",
         "header",
@@ -447,7 +517,7 @@ def test_resolve_conflict_markers_remain_aborts(monkeypatch, tmp_path):
     monkeypatch.setattr(ex, "run_cli", lambda *a, **k: (0, "agent ok"))
     monkeypatch.setattr(
         ex,
-        "run_tests",
+        "run_verify_steps",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("verify must not be called")),
     )
 
@@ -455,7 +525,7 @@ def test_resolve_conflict_markers_remain_aborts(monkeypatch, tmp_path):
         _resolve_cfg(),
         AgentConfig(name="implement", commands=["noop"]),
         git,
-        "pytest",
+        _steps(),
         "main",
         "issue-7",
         "header",
@@ -493,7 +563,7 @@ def test_resolve_conflict_merge_failed_without_files_aborts(monkeypatch):
         _resolve_cfg(),
         AgentConfig(name="implement", commands=["noop"]),
         git,
-        "pytest",
+        _steps(),
         "main",
         "issue-7",
         "header",
@@ -517,7 +587,7 @@ def test_resolve_conflict_sync_failed_has_zero_attempts(monkeypatch):
         _resolve_cfg(),
         AgentConfig(name="implement", commands=["noop"]),
         git,
-        "pytest",
+        _steps(),
         "main",
         "issue-7",
         "header",
@@ -546,13 +616,13 @@ class _CIFixGit:
 def test_fix_ci_verify_success(monkeypatch):
     git = _CIFixGit()
     monkeypatch.setattr(ex, "run_cli", lambda *a, **k: (0, "agent ok"))
-    monkeypatch.setattr(ex, "run_tests", lambda *a, **k: (0, "tests ok"))
+    monkeypatch.setattr(ex, "run_verify_steps", lambda *a, **k: (0, "tests ok"))
 
     result = fix_ci_with_agent(
         _resolve_cfg(),
         AgentConfig(name="implement", commands=["noop"]),
         git,
-        "pytest",
+        _steps(),
         "issue-7",
         "header",
         "FAILED: test_foo",
@@ -565,13 +635,13 @@ def test_fix_ci_verify_success(monkeypatch):
 def test_fix_ci_verify_failure(monkeypatch):
     git = _CIFixGit()
     monkeypatch.setattr(ex, "run_cli", lambda *a, **k: (0, "agent ok"))
-    monkeypatch.setattr(ex, "run_tests", lambda *a, **k: (1, "FAILED"))
+    monkeypatch.setattr(ex, "run_verify_steps", lambda *a, **k: (1, "FAILED"))
 
     result = fix_ci_with_agent(
         _resolve_cfg(),
         AgentConfig(name="implement", commands=["noop"]),
         git,
-        "pytest",
+        _steps(),
         "issue-7",
         "header",
         "FAILED: test_foo",
@@ -586,7 +656,7 @@ def test_fix_ci_cli_failure(monkeypatch):
     monkeypatch.setattr(ex, "run_cli", lambda *a, **k: (1, "agent crashed"))
     monkeypatch.setattr(
         ex,
-        "run_tests",
+        "run_verify_steps",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("verify must not be called")),
     )
 
@@ -594,7 +664,7 @@ def test_fix_ci_cli_failure(monkeypatch):
         _resolve_cfg(),
         AgentConfig(name="implement", commands=["noop"]),
         git,
-        "pytest",
+        _steps(),
         "issue-7",
         "header",
         "FAILED: test_foo",
@@ -613,7 +683,7 @@ def test_fix_ci_transient_output(monkeypatch):
     )
     monkeypatch.setattr(
         ex,
-        "run_tests",
+        "run_verify_steps",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("verify must not be called")),
     )
 
@@ -621,7 +691,7 @@ def test_fix_ci_transient_output(monkeypatch):
         _resolve_cfg(),
         AgentConfig(name="implement", commands=["noop"]),
         git,
-        "pytest",
+        _steps(),
         "issue-7",
         "header",
         "FAILED: test_foo",
@@ -643,7 +713,7 @@ def test_fix_ci_sync_failed_has_zero_attempts(monkeypatch):
         _resolve_cfg(),
         AgentConfig(name="implement", commands=["noop"]),
         git,
-        "pytest",
+        _steps(),
         "issue-7",
         "header",
         "FAILED: test_foo",

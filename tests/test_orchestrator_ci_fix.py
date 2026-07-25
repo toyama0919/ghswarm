@@ -94,13 +94,12 @@ def _orch(
     orch.worktree_dir = Path("/tmp/worktrees")
     orch.worktree_setup = ""
     orch.base_branch = "main"
-    orch.test_command = ""
     orch.dry_run = False
     orch.agent_names = ["implement"]
     orch._persist = lambda issue, state: None
     orch._record_busy_lease = lambda issue, state: None
     orch._ensure_worktree_git = lambda number, branch: wt
-    orch._test_command_for = lambda state, worktree: ""
+    orch._verify_steps_for = lambda state, worktree: []
     orch._spec_block = lambda state, worktree: ""
     return orch
 
