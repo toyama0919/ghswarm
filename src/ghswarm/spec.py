@@ -30,9 +30,6 @@ from .config import ConfigError, validate_verify_path
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---[ \t]*\n?", re.DOTALL)
 
-# Header used for a legacy (path-less) step's output when concatenating verify logs.
-ROOT_STEP_LABEL = "(root)"
-
 
 @dataclass
 class VerifyStep:
