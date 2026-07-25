@@ -791,21 +791,21 @@ def test_expand_env_default_when_unset(tmp_path, monkeypatch):
     app = load_config(
         _write_config(
             tmp_path,
-            defaults_extra='test_command: "${MY_TOKEN:-npm test}"\n',
+            defaults_extra='base_branch: "${MY_TOKEN:-main}"\n',
         )
     )
-    assert _repo(app).test_command == "npm test"
+    assert _repo(app).base_branch == "main"
 
 
 def test_expand_env_uses_env_over_default(tmp_path, monkeypatch):
-    monkeypatch.setenv("MY_TOKEN", "pnpm test")
+    monkeypatch.setenv("MY_TOKEN", "develop")
     app = load_config(
         _write_config(
             tmp_path,
-            defaults_extra='test_command: "${MY_TOKEN:-npm test}"\n',
+            defaults_extra='base_branch: "${MY_TOKEN:-main}"\n',
         )
     )
-    assert _repo(app).test_command == "pnpm test"
+    assert _repo(app).base_branch == "develop"
 
 
 def test_expand_env_empty_default_disables_notify(tmp_path, monkeypatch):
@@ -857,10 +857,10 @@ def test_expand_env_multiple_placeholders_and_partial(tmp_path, monkeypatch):
     app = load_config(
         _write_config(
             tmp_path,
-            defaults_extra='test_command: "${PREFIX}-middle-${SUFFIX}"\n',
+            defaults_extra='base_branch: "${PREFIX}-middle-${SUFFIX}"\n',
         )
     )
-    assert _repo(app).test_command == "pre-middle-suf"
+    assert _repo(app).base_branch == "pre-middle-suf"
 
 
 def test_expand_env_no_double_expansion(tmp_path, monkeypatch):
@@ -869,22 +869,20 @@ def test_expand_env_no_double_expansion(tmp_path, monkeypatch):
     app = load_config(
         _write_config(
             tmp_path,
-            defaults_extra='test_command: "${OUTER}"\n',
+            defaults_extra='base_branch: "${OUTER}"\n',
         )
     )
-    assert _repo(app).test_command == "resolved-${INNER}"
+    assert _repo(app).base_branch == "resolved-${INNER}"
 
 
 def test_expand_env_preserves_literals_without_placeholders(tmp_path):
     app = load_config(
         _write_config(
             tmp_path,
-            defaults_extra='test_command: "npm test"\n',
             repo_extra='base_branch: "develop"\n',
         )
     )
     cfg = _repo(app)
-    assert cfg.test_command == "npm test"
     assert cfg.base_branch == "develop"
     assert cfg.agent_for("implement").commands == ["claude -p {prompt} --model opus"]
 
@@ -950,34 +948,37 @@ def test_env_value_must_be_string(tmp_path):
         )
 
 
-# -- sandbox ---------------------------------------------------------------
+# -- verify: single form (whole-repo sandbox) -------------------------------
 
 
-def test_sandbox_defaults_when_block_missing(tmp_path):
+def test_verify_defaults_when_unset(tmp_path):
     app = load_config(_write_config(tmp_path))
-    assert _repo(app).sandbox == SandboxConfig()
+    verify = _repo(app).verify
+    assert verify.sandbox_for(None) == SandboxConfig()
+    assert verify.sandbox_for("backend") == SandboxConfig()
 
 
-def test_sandbox_loads_all_fields(tmp_path):
+def test_verify_single_form_loads_all_sandbox_fields(tmp_path):
     extra = """
-    sandbox:
-      driver: docker
-      image: node:22-bookworm
-      network: none
-      user: "1000:1000"
-      env:
-        npm_config_cache: /cache/npm
-      env_passthrough:
-        - GH_TOKEN
-        - GITHUB_TOKEN
-      volumes:
-        - ghswarm-cache:/cache
-      isolate_dirs:
-        - .venv
-        - ./node_modules/
+    verify:
+      sandbox:
+        driver: docker
+        image: node:22-bookworm
+        network: none
+        user: "1000:1000"
+        env:
+          npm_config_cache: /cache/npm
+        env_passthrough:
+          - GH_TOKEN
+          - GITHUB_TOKEN
+        volumes:
+          - ghswarm-cache:/cache
+        isolate_dirs:
+          - .venv
+          - ./node_modules/
     """
     app = load_config(_write_config(tmp_path, repo_extra=extra))
-    sb = _repo(app).sandbox
+    sb = _repo(app).verify.sandbox_for(None)
     assert sb.driver == "docker"
     assert sb.image == "node:22-bookworm"
     assert sb.network == "none"
@@ -986,107 +987,250 @@ def test_sandbox_loads_all_fields(tmp_path):
     assert sb.env_passthrough == ["GH_TOKEN", "GITHUB_TOKEN"]
     assert sb.volumes == ["ghswarm-cache:/cache"]
     assert sb.isolate_dirs == [".venv", "node_modules"]
+    # Single form applies to every path, not just None.
+    assert _repo(app).verify.sandbox_for("backend") == sb
 
 
-def test_sandbox_isolate_dirs_scalar_coerced(tmp_path):
+def test_verify_single_form_isolate_dirs_scalar_coerced(tmp_path):
     app = load_config(
         _write_config(
             tmp_path,
-            repo_extra="sandbox:\n  driver: docker\n  image: alpine\n  isolate_dirs: target\n",
+            repo_extra="verify:\n  sandbox:\n    driver: docker\n    image: alpine\n    isolate_dirs: target\n",
         )
     )
-    assert _repo(app).sandbox.isolate_dirs == ["target"]
+    assert _repo(app).verify.sandbox_for(None).isolate_dirs == ["target"]
 
 
-def test_sandbox_isolate_dirs_ignores_empty_elements(tmp_path):
-    app = load_config(
-        _write_config(
-            tmp_path,
-            repo_extra=(
-                "sandbox:\n"
-                "  driver: docker\n"
-                "  image: alpine\n"
-                "  isolate_dirs:\n"
-                "    - .venv\n"
-                "    - ''\n"
-                "    - '  '\n"
-            ),
-        )
-    )
-    assert _repo(app).sandbox.isolate_dirs == [".venv"]
-
-
-def test_sandbox_isolate_dirs_allows_dotdot_in_name(tmp_path):
+def test_verify_single_form_isolate_dirs_ignores_empty_elements(tmp_path):
     app = load_config(
         _write_config(
             tmp_path,
             repo_extra=(
-                "sandbox:\n"
-                "  driver: docker\n"
-                "  image: alpine\n"
-                "  isolate_dirs:\n"
-                "    - ..cache\n"
-                "    - foo..bar\n"
+                "verify:\n"
+                "  sandbox:\n"
+                "    driver: docker\n"
+                "    image: alpine\n"
+                "    isolate_dirs:\n"
+                "      - .venv\n"
+                "      - ''\n"
+                "      - '  '\n"
             ),
         )
     )
-    assert _repo(app).sandbox.isolate_dirs == ["..cache", "foo..bar"]
+    assert _repo(app).verify.sandbox_for(None).isolate_dirs == [".venv"]
 
 
-def test_sandbox_isolate_dirs_rejects_absolute_path(tmp_path):
+def test_verify_single_form_isolate_dirs_allows_dotdot_in_name(tmp_path):
+    app = load_config(
+        _write_config(
+            tmp_path,
+            repo_extra=(
+                "verify:\n"
+                "  sandbox:\n"
+                "    driver: docker\n"
+                "    image: alpine\n"
+                "    isolate_dirs:\n"
+                "      - ..cache\n"
+                "      - foo..bar\n"
+            ),
+        )
+    )
+    assert _repo(app).verify.sandbox_for(None).isolate_dirs == ["..cache", "foo..bar"]
+
+
+def test_verify_single_form_isolate_dirs_rejects_absolute_path(tmp_path):
     with pytest.raises(ConfigError, match="absolute path"):
         load_config(
             _write_config(
                 tmp_path,
                 repo_extra=(
-                    "sandbox:\n"
-                    "  driver: docker\n"
-                    "  image: alpine\n"
-                    "  isolate_dirs:\n"
-                    "    - /tmp/venv\n"
+                    "verify:\n"
+                    "  sandbox:\n"
+                    "    driver: docker\n"
+                    "    image: alpine\n"
+                    "    isolate_dirs:\n"
+                    "      - /tmp/venv\n"
                 ),
             )
         )
 
 
-def test_sandbox_isolate_dirs_rejects_parent_component(tmp_path):
+def test_verify_single_form_isolate_dirs_rejects_parent_component(tmp_path):
     with pytest.raises(ConfigError, match=r"\.\."):
         load_config(
             _write_config(
                 tmp_path,
                 repo_extra=(
-                    "sandbox:\n"
-                    "  driver: docker\n"
-                    "  image: alpine\n"
-                    "  isolate_dirs:\n"
-                    "    - ../outside\n"
+                    "verify:\n"
+                    "  sandbox:\n"
+                    "    driver: docker\n"
+                    "    image: alpine\n"
+                    "    isolate_dirs:\n"
+                    "      - ../outside\n"
                 ),
             )
         )
 
 
-def test_sandbox_docker_without_image_raises_config_error(tmp_path):
-    with pytest.raises(ConfigError, match="sandbox.image"):
-        load_config(_write_config(tmp_path, repo_extra="sandbox:\n  driver: docker\n"))
+def test_verify_single_form_docker_without_image_raises_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="verify.sandbox.image"):
+        load_config(_write_config(tmp_path, repo_extra="verify:\n  sandbox:\n    driver: docker\n"))
 
 
-def test_sandbox_invalid_network_raises_config_error(tmp_path):
-    with pytest.raises(ConfigError, match="sandbox.network"):
+def test_verify_single_form_invalid_network_raises_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="verify.sandbox.network"):
         load_config(
             _write_config(
                 tmp_path,
-                repo_extra="sandbox:\n  driver: docker\n  image: alpine\n  network: host\n",
+                repo_extra=(
+                    "verify:\n  sandbox:\n    driver: docker\n    image: alpine\n    network: host\n"
+                ),
             )
         )
 
 
-def test_sandbox_defaults_inherited_via_deep_merge(tmp_path):
+def test_verify_single_form_defaults_inherited_via_deep_merge(tmp_path):
     defaults = """
-    sandbox:
-      driver: docker
-      image: python:3.12
-      network: default
+    verify:
+      sandbox:
+        driver: docker
+        image: python:3.12
+        network: default
     """
     app = load_config(_write_config(tmp_path, defaults_extra=defaults))
-    assert _repo(app).sandbox.driver == "docker"
-    assert _repo(app).sandbox.image == "python:3.12"
+    sb = _repo(app).verify.sandbox_for(None)
+    assert sb.driver == "docker"
+    assert sb.image == "python:3.12"
+
+
+def test_verify_single_form_rejects_command_key(tmp_path):
+    with pytest.raises(ConfigError, match="verify"):
+        load_config(_write_config(tmp_path, repo_extra="verify:\n  command: pytest\n"))
+
+
+# -- verify: list form (monorepo path -> sandbox registry) ------------------
+
+
+def test_verify_list_form_matches_by_exact_path(tmp_path):
+    extra = """
+    verify:
+      - path: terraform
+        sandbox:
+          driver: none
+      - path: backend
+        sandbox:
+          driver: docker
+          image: python:3.12
+    """
+    app = load_config(_write_config(tmp_path, repo_extra=extra))
+    verify = _repo(app).verify
+    assert verify.sandbox_for("terraform").driver == "none"
+    assert verify.sandbox_for("backend").driver == "docker"
+    assert verify.sandbox_for("backend").image == "python:3.12"
+
+
+def test_verify_list_form_no_match_falls_back_to_driver_none(tmp_path):
+    extra = """
+    verify:
+      - path: terraform
+        sandbox:
+          driver: none
+    """
+    app = load_config(_write_config(tmp_path, repo_extra=extra))
+    assert _repo(app).verify.sandbox_for("unmatched") == SandboxConfig()
+    # A path-less (legacy) step doesn't match anything in list form either.
+    assert _repo(app).verify.sandbox_for(None) == SandboxConfig()
+
+
+def test_verify_list_form_rejects_empty_path(tmp_path):
+    with pytest.raises(ConfigError, match="path"):
+        load_config(
+            _write_config(
+                tmp_path,
+                repo_extra="verify:\n  - path: ''\n    sandbox:\n      driver: none\n",
+            )
+        )
+
+
+def test_verify_list_form_rejects_missing_path(tmp_path):
+    with pytest.raises(ConfigError, match="path"):
+        load_config(
+            _write_config(
+                tmp_path,
+                repo_extra="verify:\n  - sandbox:\n      driver: none\n",
+            )
+        )
+
+
+def test_verify_list_form_rejects_absolute_path(tmp_path):
+    with pytest.raises(ConfigError, match="absolute path"):
+        load_config(
+            _write_config(
+                tmp_path,
+                repo_extra="verify:\n  - path: /etc\n    sandbox:\n      driver: none\n",
+            )
+        )
+
+
+def test_verify_list_form_rejects_dotdot_path(tmp_path):
+    with pytest.raises(ConfigError, match=r"\.\."):
+        load_config(
+            _write_config(
+                tmp_path,
+                repo_extra="verify:\n  - path: ../outside\n    sandbox:\n      driver: none\n",
+            )
+        )
+
+
+def test_verify_list_form_rejects_duplicate_path(tmp_path):
+    with pytest.raises(ConfigError, match="duplicate"):
+        load_config(
+            _write_config(
+                tmp_path,
+                repo_extra=(
+                    "verify:\n"
+                    "  - path: backend\n"
+                    "    sandbox:\n"
+                    "      driver: none\n"
+                    "  - path: backend\n"
+                    "    sandbox:\n"
+                    "      driver: docker\n"
+                    "      image: alpine\n"
+                ),
+            )
+        )
+
+
+def test_verify_list_form_rejects_command_key(tmp_path):
+    with pytest.raises(ConfigError, match="command"):
+        load_config(
+            _write_config(
+                tmp_path,
+                repo_extra="verify:\n  - path: backend\n    command: pytest\n",
+            )
+        )
+
+
+def test_verify_list_form_docker_without_image_raises_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="sandbox.image"):
+        load_config(
+            _write_config(
+                tmp_path,
+                repo_extra="verify:\n  - path: backend\n    sandbox:\n      driver: docker\n",
+            )
+        )
+
+
+# -- verify: migration from the old test_command / sandbox keys -------------
+
+
+def test_legacy_test_command_key_raises_migration_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="verify"):
+        load_config(_write_config(tmp_path, repo_extra='test_command: "npm test"\n'))
+
+
+def test_legacy_sandbox_key_raises_migration_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="verify"):
+        load_config(
+            _write_config(tmp_path, repo_extra="sandbox:\n  driver: docker\n  image: alpine\n")
+        )
