@@ -1185,6 +1185,40 @@ def test_cmd_loop_restart_and_once_error(monkeypatch):
     assert rc == 1
 
 
+def test_cmd_status_skips_repo_with_missing_path(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    def fake_print_repo_status(cfg):
+        calls.append(cfg.name)
+
+    app = _multi_app()
+    app.repositories["b"].path = str(tmp_path / "does-not-exist")
+
+    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_print_repo_status", fake_print_repo_status)
+
+    rc = cli.cmd_status(argparse.Namespace(repos=None, config=None))
+    assert rc == 0
+    assert calls == ["a"]
+
+
+def test_cmd_status_explicit_repo_not_filtered_by_missing_path(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    def fake_print_repo_status(cfg):
+        calls.append(cfg.name)
+
+    app = _multi_app()
+    app.repositories["b"].path = str(tmp_path / "does-not-exist")
+
+    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_print_repo_status", fake_print_repo_status)
+
+    rc = cli.cmd_status(argparse.Namespace(repos=["b"], config=None))
+    assert rc == 0
+    assert calls == ["b"]
+
+
 def test_build_issue_create_args_idle_only():
     cfg = _cfg().repositories["test"]
     assert _build_issue_create_args(cfg) == ["--label", "status: idle"]

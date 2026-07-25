@@ -73,9 +73,7 @@ def _filter_missing_paths(repos: list[RepoConfig]) -> list[RepoConfig]:
         if Path(cfg.path).expanduser().is_dir():
             kept.append(cfg)
         else:
-            log.warning(
-                "Repo %r's local path does not exist, skipping: %s", cfg.name, cfg.path
-            )
+            log.warning("Repo %r's local path does not exist, skipping: %s", cfg.name, cfg.path)
     return kept
 
 
