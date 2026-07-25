@@ -191,7 +191,6 @@ in `defaults:` as well as in each repo entry.
 | `base_branch` | `""` | The PR's merge target. Work branches are also cut from here. Empty means auto-detect via `gh` |
 | `branch_prefix` | `"issue-"` | Prefix for work branch names (`issue-N`) |
 | `spec_dir` | `".specs"` | Directory where spec files are placed |
-| `test_command` | `""` | Test command run at verify. Empty skips test verification |
 | `poll_interval` | `60` | Polling interval for `loop` (seconds) |
 | `question_file` | `".agent_question.md"` | File the agent writes clarifications to |
 | `merge_method` | `"squash"` | `squash` / `merge` / `rebase` |
@@ -218,7 +217,7 @@ in `defaults:` as well as in each repo entry.
 | `labels` | defaults below | Status label names |
 | `target` | `{}` | Filter conditions for the Issues to pick up |
 | `notify` | all disabled | Push notifications for blocked, etc. |
-| `sandbox` | `driver: none` | Docker execution of setup / verify (opt-in) |
+| `verify` | empty registry (`driver: none`) | path -> sandbox registry used to run the spec's verify steps (below) |
 
 ### agents (required)
 
@@ -262,7 +261,41 @@ agents:
 | `macos` | `false` | Whether to emit macOS notifications |
 | `on_completed` | `true` | Whether to also notify on merge completion |
 
-### sandbox (Docker execution of setup / verify, opt-in)
+### verify (path -> sandbox registry for verification, and per-directory monorepo verify)
+
+`verify` never carries a command — the actual verification steps to run are declared per-Issue in
+the spec's frontmatter `verify:` (see [`ghswarm-spec`'s `SKILL.md`](src/ghswarm/skills/ghswarm-spec/SKILL.md)).
+Config's `verify:` only declares **where** each step runs (locally, or inside which Docker image),
+keyed by directory. This lets a monorepo (e.g. `terraform/` alongside `backend/`) run each directory's
+verification in its own execution environment while a single Issue/PR touches both.
+
+Two shapes are accepted:
+
+- **Single form** (default for most non-monorepo repos): a mapping with only `sandbox`, used for
+  every verify step regardless of its `path`.
+
+  ```yaml
+  verify:
+    sandbox:
+      driver: none   # also the default when omitted
+  ```
+
+- **List form** (a monorepo path -> sandbox registry): a list of `{path, sandbox}` mappings, matched
+  by exact string comparison against each verify step's `path` in the spec's frontmatter. If no entry
+  matches (or `verify:` is unset), that step falls back to `driver: none` (it does not error).
+
+  ```yaml
+  verify:
+    - path: terraform
+      sandbox:
+        driver: none
+    - path: backend
+      sandbox:
+        driver: docker
+        image: python:3.12
+  ```
+
+`sandbox` (used in either shape above) accepts:
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -274,6 +307,12 @@ agents:
 | `env_passthrough` | `[]` | Names of environment variables passed through from the host (e.g. `GH_TOKEN`) |
 | `volumes` | `[]` | Additional mounts (`name:path`) |
 | `isolate_dirs` | `[]` | Isolate this path inside the worktree via a container-only writable mount (e.g. `.venv` / `node_modules`). Relative to the worktree root, no `..` |
+
+Under Docker, the whole worktree is always mounted (never just the step's subdirectory); only the
+container's working directory changes per step, so sibling directories stay visible.
+
+**Migration note**: the old top-level `test_command` / `sandbox` keys have been removed (no backward
+compatibility). A config file still using them raises a `ConfigError` prompting migration to `verify:`.
 
 ## Usage
 
