@@ -42,24 +42,29 @@ tag and the packaged version never drift. `pyproject.toml` is the single source 
 
 4. **Edit** the `version = "..."` line in `pyproject.toml` to `<new>`.
 
-5. **Sanity gate.** Run `uv sync --extra dev` if needed, then `uv run pytest -q` and
-   `uv run ruff check .`. If either fails, revert the edit (`git checkout pyproject.toml`) and stop.
+5. **Refresh the lockfile.** Run `uv lock` (or `uv sync --extra dev`) so the `ghswarm` entry in
+   `uv.lock` is bumped to `<new>` too. The lockfile and pyproject.toml must be committed together,
+   otherwise `uv.lock` is left with an uncommitted version bump.
 
-6. **Commit to main and push.** `git add pyproject.toml && git commit -m "Release v<new>"`
+6. **Sanity gate.** Run `uv run pytest -q` and `uv run ruff check .`. If either fails, revert the
+   edits (`git checkout pyproject.toml uv.lock`) and stop.
+
+7. **Commit to main and push.** `git add pyproject.toml uv.lock && git commit -m "Release v<new>"`
    (English, per AGENTS.md), then `git push origin main`.
+   Always stage **both** `pyproject.toml` and `uv.lock` — the version lives in both.
    Release version bumps commit directly to `main` — this is the intentional exception to the
    "no direct work on main" rule.
 
-7. **Tag and push the tag.** `git tag v<new> && git push origin v<new>`. This push is what
+8. **Tag and push the tag.** `git tag v<new> && git push origin v<new>`. This push is what
    triggers the publish workflow.
 
-8. **Watch the publish.** Find the run (`gh run list --workflow=publish.yml --limit 1`) and
+9. **Watch the publish.** Find the run (`gh run list --workflow=publish.yml --limit 1`) and
    `gh run watch <id> --exit-status`. On success, report the PyPI URL
    `https://pypi.org/project/ghswarm/<new>/`. On failure, surface the failing step's log.
 
 ## Notes
 
 - If publish fails with `File already exists`, that version is already on PyPI — bump again and re-run.
-- The workflow builds from the tagged commit, so the version bump commit (step 6) must land on
-  `main` **before** the tag is pushed (step 7). Keep that order.
+- The workflow builds from the tagged commit, so the version bump commit (step 7) must land on
+  `main` **before** the tag is pushed (step 8). Keep that order.
 - Confirm the new version with the user before running when the bump level is ambiguous.
