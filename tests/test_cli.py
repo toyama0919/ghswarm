@@ -759,6 +759,43 @@ def test_cmd_loop_once_uses_parallel_cycle(monkeypatch):
     assert cycles == [["a", "b"]]
 
 
+def test_cmd_loop_once_skips_repo_with_missing_path(monkeypatch, tmp_path):
+    cycles: list[list[str]] = []
+
+    def fake_parallel(repos, **kwargs):
+        cycles.append([r.name for r in repos])
+
+    app = _multi_app()
+    app.repositories["b"].path = str(tmp_path / "does-not-exist")
+
+    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
+
+    rc = cli.cmd_loop(argparse.Namespace(repos=None, once=True, dry_run=False, verbose=False))
+    assert rc == 0
+    assert cycles == [["a"]]
+
+
+def test_cmd_loop_once_all_missing_paths_reports_no_target_repos(monkeypatch, tmp_path, caplog):
+    cycles: list[list[str]] = []
+
+    def fake_parallel(repos, **kwargs):
+        cycles.append([r.name for r in repos])
+
+    app = _multi_app()
+    app.repositories["a"].path = str(tmp_path / "missing-a")
+    app.repositories["b"].path = str(tmp_path / "missing-b")
+
+    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
+
+    with caplog.at_level("WARNING"):
+        rc = cli.cmd_loop(argparse.Namespace(repos=None, once=True, dry_run=False, verbose=False))
+    assert rc == 0
+    assert cycles == []
+    assert any("No target repositories" in rec.message for rec in caplog.records)
+
+
 def test_cmd_loop_idle_stop_interrupts_wait(monkeypatch):
     cycles: list[int] = []
     waits: list[int] = []
