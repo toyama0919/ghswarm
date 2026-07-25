@@ -37,25 +37,42 @@ defaults:                    # Shared fallback for all repos (optional)
   branch_prefix: "issue-"
   spec_dir: ".specs"
   base_branch: ""
-  test_command: ""
   address_pr_reviews: true
   delete_branch_on_merge: true
   post_merge_ci: true
   post_merge_ci_grace: 180
   worktree_dir: ""
   worktree_setup: ""
-  # sandbox:                         # Run setup/verify inside Docker (opt-in)
-  #   driver: none                   # none (default) | docker
-  #   image: node:22-bookworm        # Required when driver=docker
-  #   network: default               # default | none
-  #   user: auto                     # auto = $(id -u):$(id -g) / "1000:1000" / "" to omit --user
-  #   env:                           # Environment variables inside the container (HOME defaults to /tmp)
-  #     npm_config_cache: /cache/npm
-  #   env_passthrough: [GH_TOKEN, GITHUB_TOKEN]
-  #   volumes:
-  #     - ghswarm-cache:/cache
-  #   isolate_dirs:                  # Isolate this path in the worktree via a container-only writable mount
-  #     - .venv                      # Python (uv). Use node_modules for node, target for rust
+  # verify:                          # path -> sandbox registry used to run the spec's verify steps.
+  #                                   # The command itself is declared per-Issue in the spec's frontmatter,
+  #                                   # not here. Unset = every step runs locally (driver: none).
+  #
+  # Single form (default for most non-monorepo repos): one sandbox for every step,
+  # regardless of path.
+  # verify:
+  #   sandbox:
+  #     driver: none                 # none (default) | docker
+  #     image: node:22-bookworm      # Required when driver=docker
+  #     network: default             # default | none
+  #     user: auto                   # auto = $(id -u):$(id -g) / "1000:1000" / "" to omit --user
+  #     env:                         # Environment variables inside the container (HOME defaults to /tmp)
+  #       npm_config_cache: /cache/npm
+  #     env_passthrough: [GH_TOKEN, GITHUB_TOKEN]
+  #     volumes:
+  #       - ghswarm-cache:/cache
+  #     isolate_dirs:                # Isolate this path in the worktree via a container-only writable mount
+  #       - .venv                    # Python (uv). Use node_modules for node, target for rust
+  #
+  # List form (monorepo path -> sandbox registry): matched by exact path against each
+  # verify step's `path` in the spec's frontmatter. No match falls back to driver: none.
+  # verify:
+  #   - path: terraform
+  #     sandbox:
+  #       driver: none
+  #   - path: backend
+  #     sandbox:
+  #       driver: docker
+  #       image: python:3.12
   transient_error_patterns:
     - "resource_exhausted"
     - "RetriableError"
