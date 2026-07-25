@@ -35,7 +35,7 @@ ghswarm = "ghswarm.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ghswarm = ["config.example.yaml"]
+ghswarm = ["config.example.yaml", "skills/*/*.md"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
