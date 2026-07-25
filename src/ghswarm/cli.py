@@ -833,7 +833,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pk = sub.add_parser(
         "skills",
-        help="manage the bundled Claude Code skills (ghswarm-spec / -check / -release)",
+        help="manage the bundled Claude Code skills (ghswarm-spec / -check / -requirements)",
         description="manage the bundled Claude Code skills",
     )
     ksub = pk.add_subparsers(dest="skills_command", required=True)

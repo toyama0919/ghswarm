@@ -107,6 +107,7 @@ ghswarm skills install --project  # -> ./.claude/skills (this repo only)
 ghswarm skills install --force    # overwrite/update already-installed skills
 ```
 
+- `ghswarm-requirements` — Line 0 (optional): consult on requirements before drafting, then hand off to `ghswarm-spec`.
 - `ghswarm-spec` — Line 1: draft a spec, review it, create the Issue and draft spec PR.
 - `ghswarm-check` — diagnose Issues stuck at `status: blocked` and return safe ones to `idle`.
 
@@ -115,7 +116,7 @@ Re-run `ghswarm skills install --force` after upgrading ghswarm to pull in the l
 From a checkout you can also install them with the [`skills`](https://github.com/vercel-labs/skills) CLI:
 
 ```bash
-npx skills add ./ghswarm --skill ghswarm-spec --skill ghswarm-check --agent claude-code
+npx skills add ./ghswarm --skill ghswarm-spec --skill ghswarm-check --skill ghswarm-requirements --agent claude-code
 ```
 
 Maintainer-only skills (e.g. `ghswarm-release`, which publishes ghswarm itself to PyPI) are **not**
