@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -31,6 +32,11 @@ from ghswarm.config import (
 )
 from ghswarm.github import GitHubError, Issue
 from ghswarm.orchestrator import StepResult
+
+# A real, always-existing directory for RepoConfig.path defaults, distinct from any
+# pytest tmp_path (which lives under the system temp dir) so cwd-matching tests aren't
+# affected by it.
+_REAL_DIR = str(Path(__file__).resolve().parent)
 
 
 class FakeGitHub:
@@ -100,7 +106,7 @@ def _cfg(**target_overrides) -> AppConfig:
     repo = RepoConfig(
         name="test",
         repo="owner/repo",
-        path="/tmp/repo",
+        path=_REAL_DIR,
         agents={
             "implement": AgentConfig(name="implement", commands=["echo"]),
             "review": AgentConfig(name="review", commands=["echo"]),
@@ -116,7 +122,7 @@ def _multi_app() -> AppConfig:
         repos[alias] = RepoConfig(
             name=alias,
             repo=f"owner/{alias}",
-            path=f"/tmp/{alias}",
+            path=_REAL_DIR,
             agents={
                 "implement": AgentConfig(name="implement", commands=["echo"]),
                 "review": AgentConfig(name="review", commands=["echo"]),
