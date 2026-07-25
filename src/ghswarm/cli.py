@@ -643,6 +643,8 @@ def cmd_loop(args) -> int:
             log.error("%s", e)
             return 2
 
+        repos = _filter_missing_paths(repos)
+
         if not repos:
             log.warning("No target repositories")
             return 0
