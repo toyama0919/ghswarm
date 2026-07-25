@@ -13,6 +13,7 @@ import ghswarm.cli as cli
 from ghswarm import activity
 from ghswarm.cli import (
     _build_issue_create_args,
+    _filter_missing_paths,
     _phase_kind,
     _process_cycle,
     _run_parallel_cycle,
@@ -471,6 +472,28 @@ def test_select_repos_all_when_omitted():
 def test_select_repos_deduplicates_aliases():
     repos = _select_repos(_multi_app(), ["a", "a", "b"])
     assert [r.name for r in repos] == ["a", "b"]
+
+
+def test_filter_missing_paths_excludes_missing_and_logs(tmp_path, caplog):
+    existing = tmp_path / "exists"
+    existing.mkdir()
+    missing = tmp_path / "does-not-exist"
+
+    app = _multi_app()
+    app.repositories["a"].path = str(existing)
+    app.repositories["b"].path = str(missing)
+
+    with caplog.at_level("WARNING"):
+        kept = _filter_missing_paths([app.repositories["a"], app.repositories["b"]])
+
+    assert [r.name for r in kept] == ["a"]
+    assert any(str(missing) in rec.message for rec in caplog.records)
+
+
+def test_filter_missing_paths_preserves_order():
+    app = _multi_app()
+    kept = _filter_missing_paths([app.repositories["b"], app.repositories["a"]])
+    assert [r.name for r in kept] == ["b", "a"]
 
 
 def test_select_single_repo_by_cwd_no_match_with_multiple(tmp_path, monkeypatch):
