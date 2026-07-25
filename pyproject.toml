@@ -46,6 +46,12 @@ ghswarm = ["config.example.yaml", "skills/*/*.md"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 
+# `uv run` normally editable-installs the project first, which needs write
+# access under src/ (egg-info). Tests already reach the package via the
+# pythonpath above, so skip that build/install step entirely.
+[tool.uv]
+package = false
+
 [tool.ruff]
 line-length = 100
 

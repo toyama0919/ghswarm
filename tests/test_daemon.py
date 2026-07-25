@@ -119,9 +119,18 @@ def test_daemonize_raises_without_fork(monkeypatch):
 def test_daemonize_prints_grandchild_pid(tmp_path):
     import subprocess
     import sys
+    from pathlib import Path
 
     log_path = str(tmp_path / "daemon.log")
     pid_path = str(tmp_path / "daemon.pid")
+
+    # The project isn't necessarily pip/uv-installed (tool.uv.package = false),
+    # so point the subprocess at src/ the same way pytest's own pythonpath does.
+    src_dir = str(Path(daemon.__file__).resolve().parent.parent)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, [src_dir, env.get("PYTHONPATH")])
+    )
 
     code = f"""
 import os
@@ -134,6 +143,7 @@ os._exit(0)
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     assert result.returncode == 0, result.stderr
     match = re.search(
