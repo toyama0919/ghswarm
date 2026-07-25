@@ -66,6 +66,17 @@ def _select_repos(app: AppConfig, aliases: list[str] | None) -> list[RepoConfig]
     return repos
 
 
+def _filter_missing_paths(repos: list[RepoConfig]) -> list[RepoConfig]:
+    """Exclude repos whose local path does not exist, logging one warning each. Preserves order."""
+    kept: list[RepoConfig] = []
+    for cfg in repos:
+        if Path(cfg.path).expanduser().is_dir():
+            kept.append(cfg)
+        else:
+            log.warning("Repo %r's local path does not exist, skipping: %s", cfg.name, cfg.path)
+    return kept
+
+
 def _build_issue_create_args(cfg: RepoConfig) -> list[str]:
     """Build the flag array for gh issue create from the idle label and target."""
     args: list[str] = []
@@ -630,6 +641,8 @@ def cmd_loop(args) -> int:
             log.error("%s", e)
             return 2
 
+        repos = _filter_missing_paths(repos)
+
         if not repos:
             log.warning("No target repositories")
             return 0
@@ -702,6 +715,9 @@ def cmd_status(args) -> int:
     except ConfigError as e:
         log.error("%s", e)
         return 2
+
+    if not getattr(args, "repos", None):
+        repos = _filter_missing_paths(repos)
 
     for cfg in repos:
         _print_repo_status(cfg)

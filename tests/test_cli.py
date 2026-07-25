@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,6 +13,7 @@ import ghswarm.cli as cli
 from ghswarm import activity
 from ghswarm.cli import (
     _build_issue_create_args,
+    _filter_missing_paths,
     _phase_kind,
     _process_cycle,
     _run_parallel_cycle,
@@ -31,6 +33,11 @@ from ghswarm.config import (
 )
 from ghswarm.github import GitHubError, Issue
 from ghswarm.orchestrator import StepResult
+
+# A real, always-existing directory for RepoConfig.path defaults, distinct from any
+# pytest tmp_path (which lives under the system temp dir) so cwd-matching tests aren't
+# affected by it.
+_REAL_DIR = str(Path(__file__).resolve().parent)
 
 
 class FakeGitHub:
@@ -100,7 +107,7 @@ def _cfg(**target_overrides) -> AppConfig:
     repo = RepoConfig(
         name="test",
         repo="owner/repo",
-        path="/tmp/repo",
+        path=_REAL_DIR,
         agents={
             "implement": AgentConfig(name="implement", commands=["echo"]),
             "review": AgentConfig(name="review", commands=["echo"]),
@@ -116,7 +123,7 @@ def _multi_app() -> AppConfig:
         repos[alias] = RepoConfig(
             name=alias,
             repo=f"owner/{alias}",
-            path=f"/tmp/{alias}",
+            path=_REAL_DIR,
             agents={
                 "implement": AgentConfig(name="implement", commands=["echo"]),
                 "review": AgentConfig(name="review", commands=["echo"]),
@@ -467,6 +474,28 @@ def test_select_repos_deduplicates_aliases():
     assert [r.name for r in repos] == ["a", "b"]
 
 
+def test_filter_missing_paths_excludes_missing_and_logs(tmp_path, caplog):
+    existing = tmp_path / "exists"
+    existing.mkdir()
+    missing = tmp_path / "does-not-exist"
+
+    app = _multi_app()
+    app.repositories["a"].path = str(existing)
+    app.repositories["b"].path = str(missing)
+
+    with caplog.at_level("WARNING"):
+        kept = _filter_missing_paths([app.repositories["a"], app.repositories["b"]])
+
+    assert [r.name for r in kept] == ["a"]
+    assert any(str(missing) in rec.message for rec in caplog.records)
+
+
+def test_filter_missing_paths_preserves_order():
+    app = _multi_app()
+    kept = _filter_missing_paths([app.repositories["b"], app.repositories["a"]])
+    assert [r.name for r in kept] == ["b", "a"]
+
+
 def test_select_single_repo_by_cwd_no_match_with_multiple(tmp_path, monkeypatch):
     other = tmp_path / "other"
     other.mkdir()
@@ -728,6 +757,43 @@ def test_cmd_loop_once_uses_parallel_cycle(monkeypatch):
     rc = cli.cmd_loop(argparse.Namespace(repos=None, once=True, dry_run=False, verbose=False))
     assert rc == 0
     assert cycles == [["a", "b"]]
+
+
+def test_cmd_loop_once_skips_repo_with_missing_path(monkeypatch, tmp_path):
+    cycles: list[list[str]] = []
+
+    def fake_parallel(repos, **kwargs):
+        cycles.append([r.name for r in repos])
+
+    app = _multi_app()
+    app.repositories["b"].path = str(tmp_path / "does-not-exist")
+
+    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
+
+    rc = cli.cmd_loop(argparse.Namespace(repos=None, once=True, dry_run=False, verbose=False))
+    assert rc == 0
+    assert cycles == [["a"]]
+
+
+def test_cmd_loop_once_all_missing_paths_reports_no_target_repos(monkeypatch, tmp_path, caplog):
+    cycles: list[list[str]] = []
+
+    def fake_parallel(repos, **kwargs):
+        cycles.append([r.name for r in repos])
+
+    app = _multi_app()
+    app.repositories["a"].path = str(tmp_path / "missing-a")
+    app.repositories["b"].path = str(tmp_path / "missing-b")
+
+    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
+
+    with caplog.at_level("WARNING"):
+        rc = cli.cmd_loop(argparse.Namespace(repos=None, once=True, dry_run=False, verbose=False))
+    assert rc == 0
+    assert cycles == []
+    assert any("No target repositories" in rec.message for rec in caplog.records)
 
 
 def test_cmd_loop_idle_stop_interrupts_wait(monkeypatch):
@@ -1117,6 +1183,40 @@ def test_cmd_loop_restart_and_once_error(monkeypatch):
         )
     )
     assert rc == 1
+
+
+def test_cmd_status_skips_repo_with_missing_path(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    def fake_print_repo_status(cfg):
+        calls.append(cfg.name)
+
+    app = _multi_app()
+    app.repositories["b"].path = str(tmp_path / "does-not-exist")
+
+    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_print_repo_status", fake_print_repo_status)
+
+    rc = cli.cmd_status(argparse.Namespace(repos=None, config=None))
+    assert rc == 0
+    assert calls == ["a"]
+
+
+def test_cmd_status_explicit_repo_not_filtered_by_missing_path(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    def fake_print_repo_status(cfg):
+        calls.append(cfg.name)
+
+    app = _multi_app()
+    app.repositories["b"].path = str(tmp_path / "does-not-exist")
+
+    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_print_repo_status", fake_print_repo_status)
+
+    rc = cli.cmd_status(argparse.Namespace(repos=["b"], config=None))
+    assert rc == 0
+    assert calls == ["b"]
 
 
 def test_build_issue_create_args_idle_only():
