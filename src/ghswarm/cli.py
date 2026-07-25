@@ -718,6 +718,9 @@ def cmd_status(args) -> int:
         log.error("%s", e)
         return 2
 
+    if not getattr(args, "repos", None):
+        repos = _filter_missing_paths(repos)
+
     for cfg in repos:
         _print_repo_status(cfg)
     return 0
