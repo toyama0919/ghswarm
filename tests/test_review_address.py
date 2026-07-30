@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import ghswarm.github as github
 import ghswarm.orchestrator as orch_mod
 from ghswarm import state as st
@@ -87,6 +89,60 @@ def test_pr_review_items_tolerates_non_list(monkeypatch):
     assert GitHub("o/r").pr_review_items(5) == []
 
 
+def _fake_threads(nodes):
+    """Build a fake _run_gh that answers the reviewThreads query and records mutations."""
+    mutated: list[str] = []
+
+    def fake_run_gh(args, cwd=None, input_text=None, env=None):
+        query = next((a for a in args if a.startswith("query=")), "")
+        if "reviewThreads" in query:
+            return json.dumps(
+                {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": nodes}}}}}
+            )
+        if "resolveReviewThread" in query:
+            tid = next(a[3:] for a in args if a.startswith("id="))
+            mutated.append(tid)
+            return json.dumps({"data": {"resolveReviewThread": {"thread": {"id": tid}}}})
+        raise AssertionError(f"unexpected gh call: {args}")
+
+    return fake_run_gh, mutated
+
+
+def _thread(tid, resolved, ts):
+    return {"id": tid, "isResolved": resolved, "comments": {"nodes": [{"createdAt": ts}]}}
+
+
+def test_resolve_review_threads_only_unresolved_within_mark(monkeypatch):
+    nodes = [
+        _thread("T_open_old", False, "2026-07-17T09:00:00Z"),  # unresolved, addressed -> resolve
+        _thread("T_done", True, "2026-07-17T09:30:00Z"),  # already resolved -> skip
+        _thread("T_newer", False, "2026-07-17T12:00:01Z"),  # newer than mark -> skip
+    ]
+    fake, mutated = _fake_threads(nodes)
+    monkeypatch.setattr(github, "_run_gh", fake)
+    n = GitHub("o/r").resolve_review_threads(5, "2026-07-17T12:00:00Z")
+    assert n == 1
+    assert mutated == ["T_open_old"]
+
+
+def test_resolve_review_threads_noop_without_mark(monkeypatch):
+    monkeypatch.setattr(
+        github, "_run_gh", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no call"))
+    )
+    assert GitHub("o/r").resolve_review_threads(5, "") == 0
+
+
+def test_resolve_review_threads_tolerates_null_pull_request(monkeypatch):
+    # GraphQL returns pullRequest: null (exit 0) for a missing/inaccessible PR;
+    # the null-safe parse must not raise.
+    monkeypatch.setattr(
+        github,
+        "_run_gh",
+        lambda *a, **k: json.dumps({"data": {"repository": {"pullRequest": None}}}),
+    )
+    assert GitHub("o/r").resolve_review_threads(5, "2026-07-17T12:00:00Z") == 0
+
+
 def test_pr_comment_posts_to_pr_conversation(monkeypatch):
     calls: list[list[str]] = []
     monkeypatch.setattr(github, "_run_gh", lambda args, **k: calls.append(args) or "")
@@ -132,9 +188,14 @@ class FakeGitHub:
         self.issue_comments: list[str] = []
         self.pr_comments: list[str] = []
         self.bodies: list[str] = []
+        self.resolved: list[tuple[int, str]] = []
 
     def pr_review_items(self, number: int) -> list[ReviewItem]:
         return self.items
+
+    def resolve_review_threads(self, number: int, up_to_ts: str = "") -> int:
+        self.resolved.append((number, up_to_ts))
+        return 1
 
     def pr_status(self, number: int) -> PRStatus:
         return self.status
@@ -270,6 +331,64 @@ def test_address_review_runs_agent_pushes_and_advances_watermark(monkeypatch):
     assert state.last_review_addressed_at == "2026-07-17T12:00:00Z"  # high-water mark advances
     # the response comment on the PR carries the marker (so our own comment is not picked up next time)
     assert any(REVIEW_RESPONSE_MARKER in c for c in orch.gh.pr_comments)
+    # addressed threads are resolved up to the advanced high-water mark
+    assert orch.gh.resolved == [(9, "2026-07-17T12:00:00Z")]
+
+
+def test_address_review_skips_resolving_when_disabled(monkeypatch):
+    monkeypatch.setattr(
+        orch_mod,
+        "execute_with_self_healing",
+        lambda *a, **k: SimpleNamespace(ok=True, reason="ok", output="", attempts=1),
+    )
+    orch = _orch([])
+    orch.cfg.resolve_review_threads = False
+    state = _state()
+    pending = [
+        ReviewItem(
+            author="bot",
+            kind="inline",
+            body="fix",
+            path="a.py",
+            line=2,
+            created_at="2026-07-17T12:00:00Z",
+        ),
+    ]
+    orch._address_review(Issue(number=7, title="Test", body="Body"), state, pending)
+    assert orch.gh.resolved == []  # resolving disabled
+
+
+@pytest.mark.parametrize("exc", [github.GitHubError("graphql down"), ValueError("bad json")])
+def test_address_review_survives_resolve_failure(monkeypatch, exc):
+    # Both a GitHubError and a non-GitHubError (e.g. a JSON parse ValueError) must be
+    # swallowed so a resolve failure never undoes the already-pushed fix.
+    monkeypatch.setattr(
+        orch_mod,
+        "execute_with_self_healing",
+        lambda *a, **k: SimpleNamespace(ok=True, reason="ok", output="", attempts=1),
+    )
+    orch = _orch([])
+
+    def boom(number, up_to_ts=""):
+        raise exc
+
+    orch.gh.resolve_review_threads = boom
+    state = _state()
+    pending = [
+        ReviewItem(
+            author="bot",
+            kind="inline",
+            body="fix",
+            path="a.py",
+            line=2,
+            created_at="2026-07-17T12:00:00Z",
+        ),
+    ]
+    # a resolve failure is swallowed; the push/watermark still succeed
+    result = orch._address_review(Issue(number=7, title="Test", body="Body"), state, pending)
+    assert result.action == "review_addressed"
+    assert orch._test_wt.pushed == ["issue-7"]
+    assert state.last_review_addressed_at == "2026-07-17T12:00:00Z"
 
 
 def test_address_review_blocks_on_agent_failure(monkeypatch):

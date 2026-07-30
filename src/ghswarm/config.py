@@ -148,6 +148,9 @@ class RepoConfig:
     # review bots) and have the review agent address them. Ensures review feedback
     # is not dropped, not just that CI passes.
     address_pr_reviews: bool = True
+    # after addressing review feedback, mark the corresponding review threads as
+    # resolved so the PR does not keep dangling "unresolved" conversations.
+    resolve_review_threads: bool = True
     delete_branch_on_merge: bool = True
     # whether to check the target branch's CI after merging before closing the Issue
     post_merge_ci: bool = True
@@ -672,6 +675,7 @@ def _build_repo_config_from_raw(
         merge_method=raw.get("merge_method", "squash"),
         require_approval=bool(raw.get("require_approval", True)),
         address_pr_reviews=bool(raw.get("address_pr_reviews", True)),
+        resolve_review_threads=bool(raw.get("resolve_review_threads", True)),
         delete_branch_on_merge=bool(raw.get("delete_branch_on_merge", True)),
         post_merge_ci=bool(raw.get("post_merge_ci", True)),
         post_merge_ci_grace=int(raw.get("post_merge_ci_grace", 180)),

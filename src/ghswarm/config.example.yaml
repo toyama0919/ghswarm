@@ -38,6 +38,7 @@ defaults:                    # Shared fallback for all repos (optional)
   spec_dir: ".specs"
   base_branch: ""
   address_pr_reviews: true
+  resolve_review_threads: true
   delete_branch_on_merge: true
   post_merge_ci: true
   post_merge_ci_grace: 180

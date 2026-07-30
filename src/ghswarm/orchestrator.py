@@ -27,7 +27,7 @@ from .executor import (
     resolve_conflict_with_agent,
 )
 from .git_ops import Git, GitError
-from .github import GitHub, Issue, PRStatus, ReviewItem, detect_default_branch
+from .github import GitHub, GitHubError, Issue, PRStatus, ReviewItem, detect_default_branch
 from .logging_utils import get_logger
 from .notify import Notifier
 from .sandbox import make_runner
@@ -624,6 +624,16 @@ class Orchestrator:
         latest = max((it.created_at for it in pending if it.created_at), default="")
         if latest:
             state.last_review_addressed_at = latest
+            # Mark the addressed review threads as resolved so they don't linger as
+            # "unresolved" conversations on the PR (best-effort; a failure here must
+            # not block the flow that already pushed the fix).
+            if self.cfg.resolve_review_threads:
+                try:
+                    n = self.gh.resolve_review_threads(state.pr_number, latest)
+                    if n:
+                        log.info("Issue #%s: resolved %s review thread(s)", issue.number, n)
+                except (GitHubError, ValueError) as e:
+                    log.warning("Issue #%s: resolving review threads failed: %s", issue.number, e)
         state.transient_retries = 0
         state.phase = "review_addressed"
         state.next_action = "wait_ci"

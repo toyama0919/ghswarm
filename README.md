@@ -196,6 +196,7 @@ in `defaults:` as well as in each repo entry.
 | `merge_method` | `"squash"` | `squash` / `merge` / `rebase` |
 | `require_approval` | `true` | Whether auto-merge requires a PR review approval |
 | `address_pr_reviews` | `true` | Whether to have the review agent address PR review comments (human / bot) |
+| `resolve_review_threads` | `true` | After addressing review feedback, mark the corresponding PR review threads as resolved |
 | `delete_branch_on_merge` | `true` | Whether to delete the work branch after merge |
 | `post_merge_ci` | `true` | Whether to confirm the base branch's CI is green after merge before closing the Issue |
 | `post_merge_ci_grace` | `180` | Grace before treating post-merge CI as "no CI" when there are 0 checks (seconds) |

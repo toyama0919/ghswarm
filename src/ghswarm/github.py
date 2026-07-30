@@ -535,6 +535,78 @@ class GitHub:
     def _api_json(self, path: str) -> Any:
         return json.loads(_run_gh(["api", path], env=self.env))
 
+    def resolve_review_threads(self, number: int, up_to_ts: str = "") -> int:
+        """Resolve unresolved review threads on a PR that have already been addressed.
+
+        A thread is resolved only when it is currently unresolved and its newest
+        comment was created at or before ``up_to_ts`` (the high-water mark of the
+        review feedback ghswarm just addressed). Threads with newer activity — e.g. a
+        human reply after the batch — are left open so an ongoing discussion is not
+        silently closed. ISO8601-UTC timestamps compare correctly as strings.
+
+        Returns the number of threads resolved. Does nothing when ``up_to_ts`` is
+        empty (nothing has been addressed yet).
+        """
+        if not up_to_ts:
+            return 0
+        owner, _, name = self.repo.partition("/")
+        if not owner or not name:
+            return 0
+
+        # first:100 mirrors pr_review_items' per_page=100; threads beyond 100 are
+        # left untouched (acceptable for real-world PRs).
+        query = (
+            "query($owner:String!,$name:String!,$number:Int!){"
+            "repository(owner:$owner,name:$name){pullRequest(number:$number){"
+            "reviewThreads(first:100){nodes{id isResolved "
+            "comments(last:1){nodes{createdAt}}}}}}}"
+        )
+        out = _run_gh(
+            [
+                "api",
+                "graphql",
+                "-f",
+                f"query={query}",
+                "-f",
+                f"owner={owner}",
+                "-f",
+                f"name={name}",
+                "-F",
+                f"number={number}",
+            ],
+            env=self.env,
+        )
+        # GraphQL returns repository/pullRequest as null (not absent) with exit 0 when
+        # they are missing or inaccessible, so guard every level with `or {}`.
+        data = json.loads(out).get("data") or {}
+        repo = data.get("repository") or {}
+        pr = repo.get("pullRequest") or {}
+        threads = (pr.get("reviewThreads") or {}).get("nodes") or []
+
+        resolved = 0
+        for thr in threads:
+            if not isinstance(thr, dict) or thr.get("isResolved"):
+                continue
+            comments = ((thr.get("comments") or {}).get("nodes")) or []
+            newest = comments[-1].get("createdAt") if comments else ""
+            if not newest or newest > up_to_ts:
+                continue
+            thread_id = thr.get("id")
+            if not thread_id:
+                continue
+            self._resolve_thread(thread_id)
+            resolved += 1
+        return resolved
+
+    def _resolve_thread(self, thread_id: str) -> None:
+        mutation = (
+            "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}"
+        )
+        _run_gh(
+            ["api", "graphql", "-f", f"query={mutation}", "-f", f"id={thread_id}"],
+            env=self.env,
+        )
+
     def merge_commit_sha(self, pr_number: int) -> str:
         """Return the sha of a merged PR's merge commit (empty string if not merged)."""
         out = _run_gh(
