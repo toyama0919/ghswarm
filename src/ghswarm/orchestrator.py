@@ -268,14 +268,13 @@ class Orchestrator:
             f"You are an excellent software engineer. "
             f'You are working on GitHub Issue #{issue.number} "{issue.title}".\n'
             f"This task has an approved spec. You MUST implement it according to the spec.\n"
-            f"{self._spec_block(state, wt.cwd)}"
+            f"{self._spec_block(issue.number, issue.body)}"
             f"On the current working branch, implement and test all of the following "
             f"unfinished tasks autonomously, in order from top to bottom:\n\n"
             f"{task_list}\n\n"
             f"Make one commit per task. "
             f"When you are done, leave the repository in a state where the spec's verify "
             f"command passes.\n"
-            f"Issue body:\n{stripped[:2000]}\n"
             f"{resume_ctx}"
             f"{q.question_prompt_hint(self.cfg.question_file)}"
         )
@@ -382,7 +381,7 @@ class Orchestrator:
         prompt = (
             f'The implementation of GitHub Issue #{issue.number} "{issue.title}" is '
             f"broadly complete.\n"
-            f"{self._spec_block(state, wt.cwd)}"
+            f"{self._spec_block(issue.number, issue.body)}"
             f"Run the tests against the changes on the current working branch and perform "
             f"a code review, including checking consistency with the spec.\n"
             f"Fix any problems and leave all tests passing.\n"
@@ -583,7 +582,7 @@ class Orchestrator:
             f'"{issue.title}" has received review comments. Address the feedback below.\n'
             f"This includes not only human reviewers but also review bots "
             f"(CodeRabbit / Copilot, etc.).\n"
-            f"{self._spec_block(state, wt.cwd)}"
+            f"{self._spec_block(issue.number, issue.body)}"
             f"--- review feedback ---\n{review_block}\n--- /review feedback ---\n\n"
             f"On the current working branch, fix the valid points and leave all tests "
             f"passing.\n"
@@ -664,7 +663,7 @@ class Orchestrator:
         prompt_header = (
             f"The PR (#{state.pr_number}) for GitHub Issue #{issue.number} "
             f'"{issue.title}" has merge conflicts with `{self.base_branch}`.'
-            f"{self._spec_block(state, wt.cwd)}"
+            f"{self._spec_block(issue.number, issue.body)}"
         )
         result = resolve_conflict_with_agent(
             self.cfg,
@@ -783,7 +782,7 @@ class Orchestrator:
         prompt_header = (
             f"CI (GitHub Actions) failed on the PR (#{state.pr_number}) for GitHub "
             f'Issue #{issue.number} "{issue.title}".'
-            f"{self._spec_block(state, wt.cwd)}"
+            f"{self._spec_block(issue.number, issue.body)}"
         )
         result = fix_ci_with_agent(
             self.cfg,
@@ -1009,12 +1008,11 @@ class Orchestrator:
         self._release_idle(issue, state)
         return StepResult(issue.number, "retry_pending", result.reason)
 
-    def _spec_block(self, state: st.IssueState, worktree: str) -> str:
-        spec = self._load_spec(state, worktree)
-        if not spec.body.strip():
+    def _spec_block(self, issue_number: int, body: str) -> str:
+        text = st.prose(body).strip()
+        if not text:
             return ""
-        # Pass only the body (excluding the front matter / meta) into the prompt.
-        return f"\n--- spec ({state.spec_path}) ---\n{spec.body[:4000]}\n--- /spec ---\n"
+        return f"\n--- spec (issue #{issue_number}) ---\n{text[:4000]}\n--- /spec ---\n"
 
     def _spec_path_set(self, state: st.IssueState) -> bool:
         """Whether spec_path is set in the Issue metadata (for the start gate)."""
