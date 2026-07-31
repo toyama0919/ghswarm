@@ -18,7 +18,7 @@ from pathlib import Path
 from . import labels as lbl
 from . import questions as q
 from . import state as st
-from .config import RepoConfig, resolve_worktree_dir
+from .config import ConfigError, RepoConfig, resolve_worktree_dir
 from .events import EventLog, resolve_event_db_path
 from .executor import (
     ResolvedStep,
@@ -31,7 +31,7 @@ from .github import GitHub, GitHubError, Issue, PRStatus, ReviewItem, detect_def
 from .logging_utils import get_logger
 from .notify import Notifier
 from .sandbox import make_runner
-from .spec import Spec, parse_spec
+from .spec import Spec
 
 log = get_logger("ghswarm.orch")
 
@@ -288,11 +288,15 @@ class Orchestrator:
                 return True
             return False
 
+        verify = self._resolve_verify_steps(issue, state, issue.body)
+        if isinstance(verify, StepResult):
+            return verify
+
         result = execute_with_self_healing(
             self.cfg,
             agent,
             wt,
-            self._verify_steps_for(state, wt.cwd),
+            verify,
             prompt,
             on_question,
         )
@@ -391,8 +395,12 @@ class Orchestrator:
         def on_question() -> bool:
             return q.check_question_file(wt.cwd, self.cfg.question_file) is not None
 
+        verify = self._resolve_verify_steps(issue, state, issue.body)
+        if isinstance(verify, StepResult):
+            return verify
+
         result = execute_with_self_healing(
-            self.cfg, agent, wt, self._verify_steps_for(state, wt.cwd), prompt, on_question
+            self.cfg, agent, wt, verify, prompt, on_question
         )
         state.iteration += 1
         state.total_agent_runs += result.attempts
@@ -593,8 +601,12 @@ class Orchestrator:
         def on_question() -> bool:
             return q.check_question_file(wt.cwd, self.cfg.question_file) is not None
 
+        verify = self._resolve_verify_steps(issue, state, issue.body)
+        if isinstance(verify, StepResult):
+            return verify
+
         result = execute_with_self_healing(
-            self.cfg, agent, wt, self._verify_steps_for(state, wt.cwd), prompt, on_question
+            self.cfg, agent, wt, verify, prompt, on_question
         )
         state.iteration += 1
         state.total_agent_runs += result.attempts
@@ -665,11 +677,15 @@ class Orchestrator:
             f'"{issue.title}" has merge conflicts with `{self.base_branch}`.'
             f"{self._spec_block(issue.number, issue.body)}"
         )
+        verify = self._resolve_verify_steps(issue, state, issue.body)
+        if isinstance(verify, StepResult):
+            return verify
+
         result = resolve_conflict_with_agent(
             self.cfg,
             agent,
             wt,
-            self._verify_steps_for(state, wt.cwd),
+            verify,
             self.base_branch,
             state.branch_name,
             prompt_header,
@@ -784,11 +800,15 @@ class Orchestrator:
             f'Issue #{issue.number} "{issue.title}".'
             f"{self._spec_block(issue.number, issue.body)}"
         )
+        verify = self._resolve_verify_steps(issue, state, issue.body)
+        if isinstance(verify, StepResult):
+            return verify
+
         result = fix_ci_with_agent(
             self.cfg,
             agent,
             wt,
-            self._verify_steps_for(state, wt.cwd),
+            verify,
             state.branch_name,
             prompt_header,
             ci_logs,
@@ -1050,23 +1070,18 @@ class Orchestrator:
         self._enter_blocked(issue, state, reason_code, detail)
         return StepResult(issue.number, "blocked", reason_code)
 
-    def _load_spec(self, state: st.IssueState, worktree: str) -> Spec:
-        if not state.spec_path:
-            return Spec()
-        path = Path(worktree) / state.spec_path
-        if not path.is_file():
-            log.warning("spec file not found: %s", path)
-            return Spec()
-        return parse_spec(path.read_text(encoding="utf-8"))
-
-    def _verify_steps_for(self, state: st.IssueState, worktree: str) -> list[ResolvedStep]:
-        """Resolve the spec's verify_steps into steps with cwd/runner already attached.
+    def _verify_steps_for(self, body: str) -> list[ResolvedStep]:
+        """Resolve the Issue body's verify metadata into steps with cwd/runner attached.
 
         Each step's execution environment comes from config's VerifyConfig.sandbox_for,
-        matched by the step's path (None for a legacy, path-less step). If the spec has
-        no verify (or an empty list), this returns an empty list (= skip verification).
+        matched by the step's path (None for a legacy, path-less step). If verify is
+        absent or empty, this returns an empty list (= skip verification).
+
+        Raises ConfigError when the GHSWARM_VERIFY block is malformed or verify
+        normalization fails.
         """
-        steps = self._load_spec(state, worktree).verify_steps
+        meta = st.parse_verify_meta(body)
+        steps = Spec(meta=meta).verify_steps
         return [
             ResolvedStep(
                 path=step.path,
@@ -1075,6 +1090,29 @@ class Orchestrator:
             )
             for step in steps
         ]
+
+    def _resolve_verify_steps(
+        self, issue: Issue, state: st.IssueState, body: str
+    ) -> list[ResolvedStep] | StepResult:
+        """Resolve verify steps from the Issue body, or block with verify_invalid."""
+        try:
+            return self._verify_steps_for(body)
+        except ConfigError as exc:
+            return self._block_for_invalid_verify(issue, state, exc)
+
+    def _block_for_invalid_verify(
+        self, issue: Issue, state: st.IssueState, exc: ConfigError
+    ) -> StepResult:
+        """Malformed GHSWARM_VERIFY metadata. Comments, transitions to blocked, and notifies."""
+        comment = (
+            "🚫 **Cannot start**: invalid verify configuration\n\n"
+            f"The Issue's `GHSWARM_VERIFY` block could not be parsed:\n\n"
+            f"```\n{exc}\n```\n\n"
+            f"Fix the `GHSWARM_VERIFY` block in the Issue body, then resume."
+        )
+        self.gh.comment(issue.number, comment)
+        self._enter_blocked(issue, state, "verify_invalid", str(exc))
+        return StepResult(issue.number, "blocked", "verify_invalid")
 
     def _persist(self, issue: Issue, state: st.IssueState) -> None:
         fresh = self.gh.get_issue(issue.number)
