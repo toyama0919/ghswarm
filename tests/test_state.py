@@ -53,6 +53,50 @@ def test_write_state_replaces_existing_block_without_stacking():
     assert st.parse_state(body, 1).phase == "b"
 
 
+def test_write_state_places_block_before_body():
+    human = "# Title\n- [ ] Do the thing"
+    body = st.write_state(human, st.IssueState(branch_name="issue-1"))
+    assert body.startswith(st.STATE_START)
+    assert body.index(st.STATE_START) < body.index(human)
+
+
+def test_write_state_empty_body_returns_block_only():
+    state = st.IssueState(branch_name="issue-1")
+    body = st.write_state("", state)
+    block = f"{st.STATE_START}\n{state.to_json()}\n{st.STATE_END}"
+    assert body == f"{block}\n"
+
+
+def test_write_state_migrates_legacy_state_block_to_top():
+    human = "# Title\n- [ ] Do the thing"
+    old_state = st.IssueState(phase="implementing")
+    legacy = f"{human}\n\n{st.STATE_START}\n{old_state.to_json()}\n{st.STATE_END}\n"
+
+    body = st.write_state(legacy, st.IssueState(phase="ai_review"))
+
+    assert body.startswith(st.STATE_START)
+    assert body.endswith(human)
+    assert body.count(st.STATE_START) == 1
+    assert st.parse_state(body, 1).phase == "ai_review"
+    assert st.strip_state(body) == human
+
+
+def test_parse_tasks_is_position_independent_of_state_block():
+    human = "- [ ] first\n- [x] second"
+    state = st.IssueState(branch_name="issue-1")
+    legacy = f"{human}\n\n{st.STATE_START}\n{state.to_json()}\n{st.STATE_END}\n"
+    current = st.write_state(human, state)
+
+    assert [(task.text, task.done) for task in st.parse_tasks(current)] == [
+        ("first", False),
+        ("second", True),
+    ]
+    assert [(task.text, task.done) for task in st.parse_tasks(legacy)] == [
+        ("first", False),
+        ("second", True),
+    ]
+
+
 def test_parse_tasks_and_progress():
     body = "- [ ] first\n- [x] second\n  - [ ] nested"
     tasks = st.parse_tasks(body)

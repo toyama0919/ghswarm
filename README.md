@@ -36,7 +36,7 @@ flowchart TB
 
 - **Mutual exclusion via labels** — `status: busy-<agent>` / `idle` / `blocked` / `completed`.
   Only one CLI runs at a time within the same repository. The lock lives on GitHub, so it is shared across processes.
-- **State persisted in the Issue body** — saved as JSON in an HTML comment at the end of the body
+- **State persisted in the Issue body** — saved as JSON in an HTML comment at the top of the body
   (`<!-- GHSWARM_STATE_START ... GHSWARM_STATE_END -->`), holding `next_action` / `branch_name` / `pr_number` and so on.
   Verify steps live in a separate `<!-- GHSWARM_VERIFY_START ... GHSWARM_VERIFY_END -->` block so they survive every state rewrite.
 - **Progress via checkboxes** — `- [ ] task` items in the Issue body are worked through and updated to `- [x]`. Incomplete tasks are
