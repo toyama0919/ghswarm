@@ -17,13 +17,13 @@ BODY = """## Task breakdown
 - [ ] Task A
 """
 
-SPEC_PATH = ".specs/test-spec.md"
+VERIFY_BLOCK = """<!-- GHSWARM_VERIFY_START
+verify: []
+GHSWARM_VERIFY_END -->"""
 
 
-def _write_spec(worktree_root: Path, spec_path: str = SPEC_PATH) -> None:
-    path = worktree_root / spec_path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("# test\n", encoding="utf-8")
+def _body_with_verify(base: str = BODY) -> str:
+    return f"{base}\n\n{VERIFY_BLOCK}"
 
 
 class FakeGitHub:
@@ -75,9 +75,12 @@ class FakeWorktreeGit:
         self.savepoints.append(message)
         return True
 
+    def push(self, branch: str) -> None:
+        pass
+
 
 def _body_with_state(state: st.IssueState) -> str:
-    return st.write_state(BODY, state)
+    return st.write_state(_body_with_verify(), state)
 
 
 def _orch(
@@ -99,7 +102,6 @@ def _orch(
     monkeypatch.setattr("ghswarm.orchestrator.lbl.acquire", lambda *a, **k: None)
 
     if tmp_path is not None:
-        _write_spec(tmp_path)
         wt = FakeWorktreeGit(str(tmp_path))
     else:
         wt = FakeWorktreeGit()
@@ -132,7 +134,6 @@ def _orch(
 def _state(**kwargs) -> st.IssueState:
     defaults = {
         "branch_name": "issue-1",
-        "spec_path": SPEC_PATH,
         "next_action": "implement",
     }
     defaults.update(kwargs)
@@ -193,7 +194,8 @@ def test_process_dry_run_budget_skipped_without_blocked_side_effects(monkeypatch
 
 
 def test_implement_increments_total_agent_runs(monkeypatch, tmp_path):
-    gh = FakeGitHub(BODY)
+    body = _body_with_verify()
+    gh = FakeGitHub(body)
     orch = _orch(
         monkeypatch,
         gh,
@@ -202,7 +204,7 @@ def test_implement_increments_total_agent_runs(monkeypatch, tmp_path):
     )
     state = _state(total_agent_runs=0)
 
-    orch._implement(Issue(number=1, title="test", body=BODY), state, resume=False)
+    orch._implement(Issue(number=1, title="test", body=body), state, resume=False)
 
     assert state.total_agent_runs == 1
 
@@ -210,7 +212,7 @@ def test_implement_increments_total_agent_runs(monkeypatch, tmp_path):
 def test_spec_missing_does_not_increment_total_agent_runs(monkeypatch):
     gh = FakeGitHub(BODY)
     orch = _orch(monkeypatch, gh)
-    state = _state(spec_path="", total_agent_runs=0)
+    state = _state(total_agent_runs=0)
 
     orch._implement(Issue(number=1, title="test", body=BODY), state, resume=False)
 
@@ -222,8 +224,8 @@ def test_resolve_conflict_clean_merge_does_not_increment_total_agent_runs(monkey
     orch = _orch(monkeypatch, gh)
     orch._persist = lambda issue, state: None
     orch._record_busy_lease = lambda issue, state: None
-    orch._verify_steps_for = lambda state, worktree: []
-    orch._spec_block = lambda state, worktree: ""
+    orch._verify_steps_for = lambda body: []
+    orch._spec_block = lambda issue_number, body: ""
     wt = FakeWorktreeGit()
     wt.try_push = lambda branch: True
     orch._ensure_worktree_git = lambda number, branch: wt

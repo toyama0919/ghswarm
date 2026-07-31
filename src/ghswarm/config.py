@@ -139,7 +139,6 @@ class RepoConfig:
     max_retries: int = 3
     question_file: str = ".agent_question.md"
     branch_prefix: str = "issue-"
-    spec_dir: str = ".specs"
     # branch the PR merges into. Work branches are also cut from here. Auto-detected via gh if empty.
     base_branch: str = ""
     merge_method: str = "squash"  # squash / merge / rebase
@@ -188,7 +187,7 @@ class RepoConfig:
     # env vars injected into this repo's gh invocations (overrides os.environ per key).
     env: dict[str, str] = field(default_factory=dict)
     # path -> sandbox registry used to run verify steps (see VerifyConfig). Never
-    # carries a command; the steps to run come from the spec frontmatter.
+    # carries a command; the steps to run come from the Issue's GHSWARM_VERIFY block.
     verify: VerifyConfig = field(default_factory=VerifyConfig)
 
     def agent_names(self) -> list[str]:
@@ -275,9 +274,14 @@ verify:
 
 _VERIFY_MIGRATION_EXAMPLE = (
     """'test_command' / top-level 'sandbox' have been removed. Migrate to 'verify:'.
-The command itself now belongs in each spec's frontmatter 'verify:', not in config.
+The command itself now belongs in each Issue's GHSWARM_VERIFY block, not in config.
 """
     + _VERIFY_EXAMPLE
+)
+
+_SPEC_DIR_MIGRATION = (
+    "The 'spec_dir' key has been removed. Verify steps and spec prose now live in each "
+    "Issue's GHSWARM_VERIFY block and body. Remove 'spec_dir' from your config."
 )
 
 
@@ -532,8 +536,8 @@ def _load_verify(raw: dict[str, Any], source: Path) -> VerifyConfig:
         if "command" in block or "path" in block:
             raise ConfigError(
                 f"{source}: single-form 'verify:' must only have 'sandbox' "
-                f"('command' / 'path' are not allowed here; commands belong in the spec's "
-                f"frontmatter).\n{_VERIFY_EXAMPLE}"
+                f"('command' / 'path' are not allowed here; commands belong in the Issue's "
+                f"GHSWARM_VERIFY block).\n{_VERIFY_EXAMPLE}"
             )
         sandbox = _load_sandbox_block(block.get("sandbox"), source, "verify.sandbox")
         return VerifyConfig(single=sandbox)
@@ -550,7 +554,7 @@ def _load_verify(raw: dict[str, Any], source: Path) -> VerifyConfig:
             if "command" in item:
                 raise ConfigError(
                     f"{source}: 'verify[{i}].command' is not allowed in config; the command "
-                    f"belongs in the spec's frontmatter 'verify:'.\n{_VERIFY_EXAMPLE}"
+                    f"belongs in the Issue's GHSWARM_VERIFY block.\n{_VERIFY_EXAMPLE}"
                 )
             path = validate_verify_path(item.get("path", ""), f"{source}: 'verify[{i}].path'")
             if path in seen:
@@ -644,6 +648,11 @@ def _candidate_paths(explicit: str | None) -> list[Path]:
     ]
 
 
+def _reject_legacy_spec_dir(raw: dict[str, Any], source: Path, location: str) -> None:
+    if "spec_dir" in raw:
+        raise ConfigError(f"{source}: '{location}' is no longer supported. {_SPEC_DIR_MIGRATION}")
+
+
 def _build_repo_config_from_raw(
     alias: str, repo: str, path: str, raw: dict[str, Any], source: Path
 ) -> RepoConfig:
@@ -670,7 +679,6 @@ def _build_repo_config_from_raw(
         max_retries=int(raw.get("max_retries", 3)),
         question_file=raw.get("question_file", ".agent_question.md"),
         branch_prefix=raw.get("branch_prefix", "issue-"),
-        spec_dir=raw.get("spec_dir", ".specs"),
         base_branch=raw.get("base_branch", ""),
         merge_method=raw.get("merge_method", "squash"),
         require_approval=bool(raw.get("require_approval", True)),
@@ -727,10 +735,12 @@ def load_app_config(explicit: str | None = None) -> AppConfig:
         )
 
     defaults: dict[str, Any] = dict(defaults_raw or {})
+    _reject_legacy_spec_dir(defaults, path, "defaults.spec_dir")
     repositories: dict[str, RepoConfig] = {}
     for alias, entry in repos_raw.items():
         if not isinstance(entry, dict):
             raise ConfigError(f"{path}: 'repositories.{alias}' must be a mapping.")
+        _reject_legacy_spec_dir(entry, path, f"repositories.{alias}.spec_dir")
         repo_name = entry.get("repo")
         repo_path = entry.get("path")
         if not repo_name or not isinstance(repo_name, str):

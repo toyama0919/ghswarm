@@ -15,15 +15,11 @@ BODY = """## Task breakdown
 - [ ] Task A
 """
 
-SPEC_PATH = ".specs/test-spec.md"
+VERIFY_BLOCK = f"""{st.VERIFY_START}
+verify: []
+{st.VERIFY_END}"""
 
-
-def _write_spec(
-    worktree_root: Path, spec_path: str = SPEC_PATH, *, content: str = "# test\n"
-) -> None:
-    path = worktree_root / spec_path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+BODY_WITH_VERIFY = f"{BODY}\n\n{VERIFY_BLOCK}"
 
 
 class FakeGitHub:
@@ -66,6 +62,9 @@ class FakeWorktreeGit:
         self.savepoints.append(message)
         return True
 
+    def push(self, branch: str) -> None:
+        pass
+
 
 def _orchestrator(
     monkeypatch, body: str, *, exec_result: ExecResult, tmp_path: Path | None = None
@@ -77,7 +76,6 @@ def _orchestrator(
     monkeypatch.setattr("ghswarm.orchestrator.lbl.acquire", lambda *a, **k: None)
 
     if tmp_path is not None:
-        _write_spec(tmp_path)
         wt = FakeWorktreeGit(str(tmp_path))
     else:
         wt = FakeWorktreeGit()
@@ -105,7 +103,7 @@ def _orchestrator(
 
 
 def _state(**kwargs) -> st.IssueState:
-    defaults = {"branch_name": "issue-1", "spec_path": SPEC_PATH, "phase": "implementing"}
+    defaults = {"branch_name": "issue-1", "phase": "implementing"}
     defaults.update(kwargs)
     return st.IssueState(**defaults)
 
@@ -113,13 +111,15 @@ def _state(**kwargs) -> st.IssueState:
 def test_transient_failure_returns_idle_and_increments_counter(monkeypatch, tmp_path):
     orch = _orchestrator(
         monkeypatch,
-        BODY,
+        BODY_WITH_VERIFY,
         exec_result=ExecResult(False, "RetriableError", 1, reason="transient"),
         tmp_path=tmp_path,
     )
     state = _state(transient_retries=0)
 
-    result = orch._implement(Issue(number=1, title="test", body=BODY), state, resume=False)
+    result = orch._implement(
+        Issue(number=1, title="test", body=BODY_WITH_VERIFY), state, resume=False
+    )
 
     assert result.action == "retry_pending"
     assert state.transient_retries == 1
@@ -132,13 +132,15 @@ def test_transient_failure_returns_idle_and_increments_counter(monkeypatch, tmp_
 def test_transient_max_retries_escalates_to_blocked(monkeypatch, tmp_path):
     orch = _orchestrator(
         monkeypatch,
-        BODY,
+        BODY_WITH_VERIFY,
         exec_result=ExecResult(False, "RetriableError", 1, reason="transient"),
         tmp_path=tmp_path,
     )
     state = _state(transient_retries=3)
 
-    result = orch._implement(Issue(number=1, title="test", body=BODY), state, resume=False)
+    result = orch._implement(
+        Issue(number=1, title="test", body=BODY_WITH_VERIFY), state, resume=False
+    )
 
     assert result.action == "blocked"
     assert state.transient_retries == 4
@@ -150,13 +152,13 @@ def test_transient_max_retries_escalates_to_blocked(monkeypatch, tmp_path):
 def test_success_resets_transient_retries(monkeypatch, tmp_path):
     orch = _orchestrator(
         monkeypatch,
-        BODY,
+        BODY_WITH_VERIFY,
         exec_result=ExecResult(True, "ok", 1),
         tmp_path=tmp_path,
     )
     state = _state(transient_retries=2)
 
-    orch._implement(Issue(number=1, title="test", body=BODY), state, resume=False)
+    orch._implement(Issue(number=1, title="test", body=BODY_WITH_VERIFY), state, resume=False)
 
     assert state.transient_retries == 0
 
@@ -164,13 +166,15 @@ def test_success_resets_transient_retries(monkeypatch, tmp_path):
 def test_permanent_cli_failed_still_blocks(monkeypatch, tmp_path):
     orch = _orchestrator(
         monkeypatch,
-        BODY,
+        BODY_WITH_VERIFY,
         exec_result=ExecResult(False, "fatal error", 1, reason="cli_failed"),
         tmp_path=tmp_path,
     )
     state = _state(transient_retries=0)
 
-    result = orch._implement(Issue(number=1, title="test", body=BODY), state, resume=False)
+    result = orch._implement(
+        Issue(number=1, title="test", body=BODY_WITH_VERIFY), state, resume=False
+    )
 
     assert result.action == "failed"
     assert state.phase == "blocked"
@@ -181,12 +185,12 @@ def test_permanent_cli_failed_still_blocks(monkeypatch, tmp_path):
 def test_review_transient_returns_retry_pending(monkeypatch):
     orch = _orchestrator(
         monkeypatch,
-        BODY,
+        BODY_WITH_VERIFY,
         exec_result=ExecResult(False, "resource_exhausted", 1, reason="transient"),
     )
     state = _state(phase="reviewing", next_action="ai_review", transient_retries=1)
 
-    result = orch._review(Issue(number=1, title="test", body=BODY), state)
+    result = orch._review(Issue(number=1, title="test", body=BODY_WITH_VERIFY), state)
 
     assert result.action == "retry_pending"
     assert state.transient_retries == 2

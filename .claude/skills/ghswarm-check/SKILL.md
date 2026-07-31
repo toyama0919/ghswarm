@@ -27,7 +27,7 @@ A skill that, for Issues where ghswarm (Line 2's resident loop) stopped autonomo
 - **The target is always the git repository in the current directory**. Before starting, `cd` into the clone of the target repository. owner/repo is auto-detected by `gh`, so do not pass `--repo`.
 - Usually called from **a later stage of the same session** where you created the spec/Issue with `ghswarm-spec` and ran `ghswarm run`. The immediately preceding run's log (stderr) is the primary source for diagnosis.
 - **In step 0, run `ghswarm config`, obtain the resolved values, and use them in later steps** (do not hardcode).
-- If `ghswarm config` exits non-zero, use these fallback defaults: `spec_dir=.specs` / `branch_prefix=issue-` / `base_branch=main` / `idle_label=status: idle` / `blocked_label=status: blocked` / `path=<cwd>`.
+- If `ghswarm config` exits non-zero, use these fallback defaults: `branch_prefix=issue-` / `base_branch=main` / `idle_label=status: idle` / `blocked_label=status: blocked` / `path=<cwd>`.
 
 ## ghswarm's recovery mechanism (facts based on the implementation)
 
@@ -44,7 +44,6 @@ State is saved as JSON inside the `<!-- GHSWARM_STATE_START` … `GHSWARM_STATE_
 | `phase` | Current phase. `"blocked"` when blocked |
 | `branch_name` | Work branch (`<branch_prefix><N>`) |
 | `next_action` | The next action to run (`implement` / `ai_review` / `wait_ci`, etc.) |
-| `spec_path` | Spec file path relative to the repository root |
 | `transient_retries` | Cumulative transient errors across loops (reset to 0 when the relevant phase completes successfully) |
 | `conflict_retries` | Cumulative conflict resolutions across loops (reset to 0 on successful resolution) |
 | `ci_fix_retries` | Cumulative CI fixes across loops (reset to 0 on successful fix) |
@@ -60,19 +59,20 @@ State is saved as JSON inside the `<!-- GHSWARM_STATE_START` … `GHSWARM_STATE_
 | `conflict` | `conflict_retries` | Reset to 0 |
 | `ci_failed` | `ci_fix_retries` | Reset to 0 |
 | **`implement_failed` / `review_failed` (`reason=max_retries`)** | **No counter needed** | Failed in the in-process self-healing loop (`max_retries` times). There is no persistent counter across loops. The correct remediation is **root-fix in the worktree → return the label** |
-| `spec_missing` / `spec_not_in_branch` | No counter needed | Requires setting `spec_path` or committing the spec to the branch |
+| `spec_missing` | No counter needed | Append a `GHSWARM_VERIFY` block to the Issue body (or re-file with ghswarm-spec) |
+| `verify_invalid` | No counter needed | Fix malformed YAML in the Issue's `GHSWARM_VERIFY` block |
 | `clarification` | No counter needed | Awaiting clarification. `--resume` after an answer |
 | `merge_ci_failed` / `git_error` / `pr_create_failed` | No counter needed | Often requires human judgment |
 
-### verify step resolution (`spec.py` / `orchestrator._verify_steps_for`)
+### verify step resolution (`state.parse_verify_meta` / `orchestrator._verify_steps_for`)
 
 The verify that runs in the implement, review, conflict-resolution, and CI-fix phases is a **sequence of steps**, assembled per Issue:
 
-1. **The spec front-matter `verify:`** (reads the file `GHSWARM_STATE.spec_path` points to, within the worktree) supplies the steps to run, via `Spec.verify_steps`:
+1. **The Issue body's `GHSWARM_VERIFY` block** supplies the steps to run, via `parse_verify_meta` + `Spec.verify_steps`:
    - Legacy form (a string, or a list of strings) normalizes to a single path-less step; each element of a list is wrapped in a subshell `(...)` and joined with ` && `.
    - New form (a list of `{path, command}` mappings) becomes one step per entry, each scoped to `path` (a worktree-relative subdirectory).
 2. Each step's execution environment (local vs. Docker, image, etc.) is resolved from **config's `verify:` registry** via `VerifyConfig.sandbox_for(step.path)` (does not appear in `ghswarm config`; refer to the repo's config YAML): single form uses that one `sandbox` for every step regardless of `path`; list form matches by exact `path`, falling back to `driver: none` when no entry matches.
-3. If the spec has no `verify` (or an empty list), there are **zero steps** → local verification is skipped (CI alone is the gate). Config's `verify:` never carries a command by itself, so it cannot provide a fallback verify command anymore.
+3. If the Issue has no `verify` in `GHSWARM_VERIFY` (or an empty list), there are **zero steps** → local verification is skipped (CI alone is the gate). Config's `verify:` never carries a command by itself, so it cannot provide a fallback verify command anymore.
 
 Steps run in order and **stop at the first failure**; each step's timeout is applied per step (not shared across steps).
 
@@ -106,8 +106,8 @@ The reason_codes that `orchestrator._enter_blocked()` / `_block_for_missing_spec
 | `clarification` | `🤖 **Clarification from …**` comment | **Report only** (keep blocked) | Present the question to the user. `--resume` after an answer | None |
 | `merge_ci_failed` | Post-merge CI failed. Issue stays open | **Report only** (product decision) | A human checks/fixes the merge target's CI | None |
 | `pr_create_failed` | PR creation exception | Conditional | Check the branch, permissions, existing PR | None |
-| `spec_missing` | `🚫 **Cannot start**: spec is not set` | **Possible** (after setting the spec) | Set `spec_path` in GHSWARM_STATE, or re-file with ghswarm-spec | None |
-| `spec_not_in_branch` | `🚫 **Cannot start**: spec is not in the branch` | **Possible** (after committing the spec) | Commit and push the spec to the work branch | None |
+| `spec_missing` | `🚫 **Cannot start**: no spec is set` | **Possible** (after adding GHSWARM_VERIFY) | Append a `GHSWARM_VERIFY` block to the Issue body, or re-file with ghswarm-spec | None |
+| `verify_invalid` | `🚫 **Cannot start**: invalid verify configuration` | **Possible** (after fixing YAML) | Fix the `GHSWARM_VERIFY` block YAML in the Issue body | None |
 
 ## Steps
 
@@ -122,7 +122,7 @@ ghswarm config          # or ghswarm config -r <ALIAS>
 On success, extract the following from the JSON and keep them as variables:
 
 - `path` — the repository's local path (to confirm the `cd` target)
-- `spec_dir` / `branch_prefix` / `base_branch`
+- `branch_prefix` / `base_branch`
 - `idle_label` / `blocked_label`
 - `target` — Issue extraction conditions
 
@@ -156,7 +156,7 @@ print(json.dumps(json.loads(m.group(1)), indent=2, ensure_ascii=False) if m else
 "
 ```
 
-Items to check: `phase` (is it `blocked`), `next_action`, `spec_path`, `branch_name`, each counter (`transient_retries` / `conflict_retries` / `ci_fix_retries` / `total_agent_runs`).
+Items to check: `phase` (is it `blocked`), `next_action`, `branch_name`, each counter (`transient_retries` / `conflict_retries` / `ci_fix_retries` / `total_agent_runs`). Also confirm a `GHSWARM_VERIFY` block is present (read with `gh issue view <N> --json body -q .body` — it is invisible in the GitHub web UI).
 
 **blocked-related comments** (refer to the `gh.comment` each caller posts before `_enter_blocked`, if any; `_enter_blocked` itself is Notifier-only and posts no Issue comment. This is separate from desktop/slack Notifier notifications):
 
@@ -203,21 +203,21 @@ If not found, ghswarm has not created a worktree yet (a pre-start `spec_missing`
 
 #### (d) Reproduce verify
 
-**The actual verify is the spec front-matter `verify:`**, run as an ordered list of steps (stop at the first failure). Config's `verify:` never carries a command — it only supplies each step's execution environment (sandbox) by matching `path`. Read the spec at `GHSWARM_STATE.spec_path` within the worktree and reproduce the steps that actually ran:
+**The actual verify is the Issue body's `GHSWARM_VERIFY` block**, run as an ordered list of steps (stop at the first failure). Config's `verify:` never carries a command — it only supplies each step's execution environment (sandbox) by matching `path`. Read the block from the Issue body and reproduce the steps:
 
 ```bash
-# assume the worktree path is in WT and spec_path is already obtained from STATE
-spec_file="$WT/<spec_path>"   # e.g. $WT/.specs/2026-07-22-issue-86.md
+gh issue view <N> --json body -q .body > /tmp/issue-body.md
 
-# extract the verify steps as "<path or (root)>\t<command>" lines.
-# legacy form (string / list of strings) normalizes to one path-less step, joined
-# the same way ghswarm does (each element wrapped in a subshell and `&&`-joined).
-python3 -c "
-import yaml, re, sys
-text = open('$spec_file').read()
-m = re.match(r'---\n(.*?)\n---', text, re.S)
-meta = yaml.safe_load(m.group(1)) if m else {}
-v = meta.get('verify')
+python3 <<'PY'
+import re, yaml, sys
+
+body = open("/tmp/issue-body.md").read()
+m = re.search(r"<!-- GHSWARM_VERIFY_START\s*(.*?)\s*GHSWARM_VERIFY_END -->", body, re.DOTALL)
+if not m:
+    print("no GHSWARM_VERIFY block")
+    sys.exit(0)
+meta = yaml.safe_load(m.group(1)) or {}
+v = meta.get("verify")
 steps = []
 if not v:
     pass
@@ -227,18 +227,16 @@ elif isinstance(v, str):
 elif all(isinstance(x, str) for x in v):
     parts = [str(x).strip() for x in v if str(x).strip()]
     if parts:
-        steps = [(None, ' && '.join(f'({p})' for p in parts))]
+        steps = [(None, " && ".join(f"({p})" for p in parts))]
 else:
-    steps = [(x['path'], x['command']) for x in v]
+    steps = [(x["path"], x["command"]) for x in v]
 for path, command in steps:
-    print(f'{path or \"(root)\"}\t{command}')
-" > /tmp/verify-steps.tsv
+    print(f"{path or '(root)'}\t{command}")
+PY > /tmp/verify-steps.tsv
 
 if [ ! -s /tmp/verify-steps.tsv ]; then
-  echo "local verification skipped (spec has no verify:)"
+  echo "local verification skipped (no GHSWARM_VERIFY or empty verify:)"
 else
-  # run each step in order under $WT/<path> (or $WT itself for (root)), stop at
-  # the first failure — same semantics as executor.run_verify_steps
   while IFS=$'\t' read -r path command; do
     dir="$WT"; [ "$path" != "(root)" ] && dir="$WT/$path"
     echo "--- verify step [$path] ---"
@@ -247,7 +245,7 @@ else
 fi
 ```
 
-If the spec has no `verify:`, local verification is always skipped now (config's `verify:` cannot supply a fallback command — it only resolves the sandbox for a given `path`, e.g. via `~/.ghswarm.yaml`'s repo entry).
+If the Issue has no `GHSWARM_VERIFY` block (or empty `verify:`), local verification is always skipped (config's `verify:` cannot supply a fallback command).
 
 **For any step whose `path` (or path-less/root) resolves to `sandbox.driver: docker`** in config's `verify:`, that step actually runs inside a Docker container (`orchestrator._verify_steps_for` + `sandbox.make_runner`/`DockerRunner`, with the whole worktree mounted and only the container's working directory set to `path`). The manual reproduction above is a shell on the host, so **the local reproduction may diverge from the result** (presence of dependency packages, paths, permissions, etc.). In docker-mode repos, also consider the docker execution environment when isolating the failure cause.
 
@@ -262,7 +260,9 @@ Following the reason_code quick reference, isolate as follows:
 - `implement_failed` / `review_failed`: fixed the root cause in the worktree and verify passed
 - `transient_exhausted` / `conflict` / `ci_failed`: the cause is resolved and retrying after a counter reset is reasonable
 - `budget_exhausted`: judged continuing reasonable, and adjusted the counter
-- `spec_missing` / `spec_not_in_branch`: setting spec_path or committing the spec to the branch is complete
+- `spec_missing` / `verify_invalid`: `GHSWARM_VERIFY` block added or fixed in the Issue body
+
+**Migrating existing Issues** (upgraded from an older ghswarm that used committed `.specs/*.md` files): read the old spec file's frontmatter `verify:` and append a `GHSWARM_VERIFY` block to the Issue body before returning to idle. The block is invisible in the GitHub web UI — use `gh issue view <N> --json body -q .body` to read it. Verify strings must not contain `-->` or `GHSWARM_VERIFY_END`.
 
 **Report only (keep blocked)**:
 
@@ -275,7 +275,6 @@ Cautions during remediation:
 
 - When fixing in a worktree, do not delete the WIP savepoint commit (stack fix commits on top)
 - For verify-failure types, **always confirm verify passes before** returning to idle
-- For `spec_not_in_branch`, commit and push the spec to the branch before recovering
 
 ### 3. Return to idle
 
@@ -351,7 +350,7 @@ Report the following concisely to the user (no need to enumerate commands):
 
 - The target Issue URL and the stop reason_code
 - The diagnosis result (cause of the verify failure, whether a counter cap was hit, etc.)
-- The remediation performed (worktree fix content, counter adjustment, spec commit, etc.)
+- The remediation performed (worktree fix content, counter adjustment, GHSWARM_VERIFY fix, etc.)
 - Whether you returned to idle / kept blocked and why
 - How to resume (loop auto-pickup / `ghswarm run` / `--resume` / additional human work)
 

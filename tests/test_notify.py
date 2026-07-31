@@ -156,25 +156,26 @@ BODY = """## Task breakdown
 - [ ] Task A
 """
 
-SPEC_PATH = ".specs/test-spec.md"
+VERIFY_BLOCK = """<!-- GHSWARM_VERIFY_START
+verify: []
+GHSWARM_VERIFY_END -->"""
+
+BODY_WITH_VERIFY = f"{BODY}\n\n{VERIFY_BLOCK}"
 
 
 @patch("ghswarm.notify.urllib.request.urlopen")
 def test_implement_failed_triggers_slack_post(urlopen, monkeypatch, tmp_path):
     urlopen.return_value = MagicMock(read=lambda: b"ok")
-    spec_file = tmp_path / SPEC_PATH
-    spec_file.parent.mkdir(parents=True, exist_ok=True)
-    spec_file.write_text("# test\n", encoding="utf-8")
     orch = _orch_with_notify(monkeypatch)
-    orch.gh = FakeGitHub(BODY)
+    orch.gh = FakeGitHub(BODY_WITH_VERIFY)
     wt = FakeWorktreeGit(str(tmp_path))
     orch._ensure_worktree_git = lambda number, branch: wt
     orch._record_busy_lease = lambda issue, state: None
     orch._persist = lambda issue, state: None
-    orch._verify_steps_for = lambda state, worktree: []
-    orch._spec_block = lambda state, worktree: ""
+    orch._verify_steps_for = lambda body: []
+    orch._spec_block = lambda issue_number, body: ""
     issue = orch.gh.get_issue(42)
-    state = st.IssueState(branch_name="issue-42", next_action="implement", spec_path=SPEC_PATH)
+    state = st.IssueState(branch_name="issue-42", next_action="implement")
 
     result = orch._implement(issue, state, resume=False)
 

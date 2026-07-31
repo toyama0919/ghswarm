@@ -1,19 +1,16 @@
-"""YAML frontmatter parsing for spec files (.specs/*.md).
+"""Verify-step normalization from Issue metadata (GHSWARM_VERIFY block).
 
-A spec may begin with optional YAML frontmatter (delimited by ``---``): machine-readable
-metadata placed before the human-readable body. Currently supported keys:
+The ``verify`` key in the parsed metadata accepts two shapes:
 
-  verify: The local verification steps for this task. Two shapes are accepted:
+  - Legacy form: a string, or a list of strings. If a list, each element is wrapped
+    in a subshell and joined with " && " into a single shell command (the string form
+    is not wrapped). Normalized into a single step with no `path` (its execution
+    environment is config's `verify` sandbox if in single form, else `driver: none`).
 
-    - Legacy form: a string, or a list of strings. If a list, each element is wrapped
-      in a subshell and joined with " && " into a single shell command (the string form
-      is not wrapped). Normalized into a single step with no `path` (its execution
-      environment is config's `verify` sandbox if in single form, else `driver: none`).
-
-    - New form: a list of mappings, each with both `path` and `command` (both
-      required). Each becomes its own step; `path` is matched against config's
-      `verify` (when in list form) to resolve its execution environment, falling back
-      to `driver: none` when no entry matches. Cannot be mixed with the legacy form.
+  - New form: a list of mappings, each with both `path` and `command` (both
+    required). Each becomes its own step; `path` is matched against config's
+    `verify` (when in list form) to resolve its execution environment, falling back
+    to `driver: none` when no entry matches. Cannot be mixed with the legacy form.
 
   If `verify` is unspecified (or an empty list), there are zero steps and local
   verification is skipped.
@@ -21,14 +18,9 @@ metadata placed before the human-readable body. Currently supported keys:
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
-import yaml
-
 from .config import ConfigError, validate_verify_path
-
-_FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---[ \t]*\n?", re.DOTALL)
 
 
 @dataclass
@@ -42,11 +34,10 @@ class VerifyStep:
 @dataclass
 class Spec:
     meta: dict = field(default_factory=dict)
-    body: str = ""  # body with frontmatter removed (the human-written spec)
 
     @property
     def verify_steps(self) -> list[VerifyStep]:
-        """Normalize the frontmatter's verify into a list of VerifyStep.
+        """Normalize the metadata's verify into a list of VerifyStep.
 
         Raises ConfigError if the new form is missing 'path'/'command' on any entry,
         or if the legacy and new forms are mixed within the same verify:.
@@ -92,22 +83,3 @@ class Spec:
             "spec verify: must be a string, a list of strings (legacy form), or a "
             "list of {path, command} mappings (new form)."
         )
-
-
-def parse_spec(content: str) -> Spec:
-    """Split a spec's text into frontmatter (meta) and body.
-
-    If the frontmatter is missing or malformed, meta is left empty and the entire
-    text becomes the body.
-    """
-    text = content or ""
-    m = _FRONTMATTER_RE.match(text)
-    if not m:
-        return Spec(meta={}, body=text)
-    try:
-        meta = yaml.safe_load(m.group(1)) or {}
-    except yaml.YAMLError:
-        meta = {}
-    if not isinstance(meta, dict):
-        meta = {}
-    return Spec(meta=meta, body=text[m.end() :])

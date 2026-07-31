@@ -1,10 +1,9 @@
 """Tests for ensure_worktree / remove_worktree / rebase_onto_base (git is not launched).
 
-In the spec PR approach the spec only exists on the working branch side, so if a branch
-exists on origin but we re-cut from base, the spec is lost. In addition to guarding against
-that regression, this verifies the branches introduced by the worktree migration in issue-15
-(reuse / cleanup / local / origin / base) and the cleanup of a leaked worktree branch
-(the phenomenon where `worktree add` with `-b` fails but the branch is left behind).
+If a branch exists on origin but is re-cut from base, its implementation WIP is lost. In
+addition to guarding against that regression, these tests verify the branches introduced by
+the worktree migration in issue-15 (reuse / cleanup / local / origin / base) and the cleanup
+of a leaked worktree branch (when `worktree add` with `-b` fails but the branch remains).
 """
 
 from __future__ import annotations

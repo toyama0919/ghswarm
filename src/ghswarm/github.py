@@ -366,7 +366,7 @@ class GitHub:
         return pr["number"] if pr else None
 
     def pr_for_branch(self, head: str) -> dict[str, Any] | None:
-        """Return the open PR corresponding to the branch (used to reuse the spec PR)."""
+        """Return the open PR corresponding to the branch, if one exists."""
         out = _run_gh(
             [
                 "pr",
@@ -386,7 +386,7 @@ class GitHub:
         return data[0] if data else None
 
     def mark_pr_ready(self, number: int) -> None:
-        """Mark a draft PR as ready for review (undraft the spec PR)."""
+        """Mark a draft PR as ready for review."""
         _run_gh(["pr", "ready", str(number), "--repo", self.repo], env=self.env)
 
     def set_pr_body(self, number: int, body: str) -> None:

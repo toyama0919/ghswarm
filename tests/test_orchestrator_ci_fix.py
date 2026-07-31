@@ -99,8 +99,8 @@ def _orch(
     orch._persist = lambda issue, state: None
     orch._record_busy_lease = lambda issue, state: None
     orch._ensure_worktree_git = lambda number, branch: wt
-    orch._verify_steps_for = lambda state, worktree: []
-    orch._spec_block = lambda state, worktree: ""
+    orch._verify_steps_for = lambda body: []
+    orch._spec_block = lambda issue_number, body: ""
     return orch
 
 

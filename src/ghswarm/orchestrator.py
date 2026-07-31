@@ -18,7 +18,7 @@ from pathlib import Path
 from . import labels as lbl
 from . import questions as q
 from . import state as st
-from .config import RepoConfig, resolve_worktree_dir
+from .config import ConfigError, RepoConfig, resolve_worktree_dir
 from .events import EventLog, resolve_event_db_path
 from .executor import (
     ResolvedStep,
@@ -31,7 +31,7 @@ from .github import GitHub, GitHubError, Issue, PRStatus, ReviewItem, detect_def
 from .logging_utils import get_logger
 from .notify import Notifier
 from .sandbox import make_runner
-from .spec import Spec, parse_spec
+from .spec import Spec
 
 log = get_logger("ghswarm.orch")
 
@@ -222,10 +222,10 @@ class Orchestrator:
         stripped = st.strip_state(issue.body)
         tasks = st.unchecked(stripped)
 
-        if not self._spec_path_set(state):
+        if not st.has_verify_meta(issue.body):
             if self.dry_run:
                 return StepResult(issue.number, "skipped", "[dry-run] cannot start: spec missing")
-            return self._block_for_missing_spec(issue, state, "spec_missing")
+            return self._block_for_missing_spec(issue, state)
 
         if not tasks:
             # No pending tasks -> move on to the AI review phase.
@@ -234,7 +234,7 @@ class Orchestrator:
             if self.dry_run:
                 return StepResult(issue.number, "skipped", "[dry-run] will transition to ai_review")
             self._persist(issue, state)
-            return self._review(self.gh.get_issue(issue.number), state, check_spec=True)
+            return self._review(self.gh.get_issue(issue.number), state)
 
         # Pass all unfinished tasks in a single CLI run. Because each CLI invocation is
         # a headless one-shot that loses its context, launching one per task would make
@@ -254,11 +254,7 @@ class Orchestrator:
 
         self._record_busy_lease(issue, state)
         lbl.acquire(self.gh, issue, self.cfg.labels, agent_name, self.agent_names)
-        # The spec lives only on the spec PR's branch, so prepare the worktree before reading it.
         wt = self._ensure_worktree_git(issue.number, state.branch_name)
-
-        if not self._spec_file_in_worktree(state, wt.cwd):
-            return self._block_for_missing_spec(issue, state, "spec_not_in_branch")
 
         resume_ctx = ""
         if resume:
@@ -268,14 +264,13 @@ class Orchestrator:
             f"You are an excellent software engineer. "
             f'You are working on GitHub Issue #{issue.number} "{issue.title}".\n'
             f"This task has an approved spec. You MUST implement it according to the spec.\n"
-            f"{self._spec_block(state, wt.cwd)}"
+            f"{self._spec_block(issue.number, issue.body)}"
             f"On the current working branch, implement and test all of the following "
             f"unfinished tasks autonomously, in order from top to bottom:\n\n"
             f"{task_list}\n\n"
             f"Make one commit per task. "
             f"When you are done, leave the repository in a state where the spec's verify "
             f"command passes.\n"
-            f"Issue body:\n{stripped[:2000]}\n"
             f"{resume_ctx}"
             f"{q.question_prompt_hint(self.cfg.question_file)}"
         )
@@ -289,11 +284,15 @@ class Orchestrator:
                 return True
             return False
 
+        verify = self._resolve_verify_steps(issue, state, issue.body)
+        if isinstance(verify, StepResult):
+            return verify
+
         result = execute_with_self_healing(
             self.cfg,
             agent,
             wt,
-            self._verify_steps_for(state, wt.cwd),
+            verify,
             prompt,
             on_question,
         )
@@ -340,6 +339,7 @@ class Orchestrator:
         # Success -> mark all of the tasks passed in this batch as [x]
         # (verify passing implies the spec's acceptance criteria are met).
         wt.savepoint(f"issue #{issue.number}: implemented {len(tasks)} task(s)")
+        wt.push(state.branch_name)
         # Refresh the body before replacing it (optimistic locking).
         fresh = self.gh.get_issue(issue.number)
         fresh_stripped = st.strip_state(fresh.body)
@@ -362,27 +362,26 @@ class Orchestrator:
         return StepResult(issue.number, "implemented", f"{len(tasks)} done ({done}/{total})")
 
     # -- review phase ------------------------------------------------------
-    def _review(
-        self, issue: Issue, state: st.IssueState, *, check_spec: bool = False
-    ) -> StepResult:
+    def _review(self, issue: Issue, state: st.IssueState) -> StepResult:
         agent = self.cfg.agent_for("review")
         agent_name = agent.name
+
+        if not st.has_verify_meta(issue.body):
+            if self.dry_run:
+                return StepResult(issue.number, "skipped", "[dry-run] cannot start: spec missing")
+            return self._block_for_missing_spec(issue, state)
 
         if self.dry_run:
             return StepResult(issue.number, "skipped", f"[dry-run] ai_review -> {agent_name}")
 
         self._record_busy_lease(issue, state)
         lbl.acquire(self.gh, issue, self.cfg.labels, agent_name, self.agent_names)
-        # The spec lives only on the spec PR's branch, so prepare the worktree before reading it.
         wt = self._ensure_worktree_git(issue.number, state.branch_name)
-
-        if check_spec and not self._spec_file_in_worktree(state, wt.cwd):
-            return self._block_for_missing_spec(issue, state, "spec_not_in_branch")
 
         prompt = (
             f'The implementation of GitHub Issue #{issue.number} "{issue.title}" is '
             f"broadly complete.\n"
-            f"{self._spec_block(state, wt.cwd)}"
+            f"{self._spec_block(issue.number, issue.body)}"
             f"Run the tests against the changes on the current working branch and perform "
             f"a code review, including checking consistency with the spec.\n"
             f"Fix any problems and leave all tests passing.\n"
@@ -392,9 +391,11 @@ class Orchestrator:
         def on_question() -> bool:
             return q.check_question_file(wt.cwd, self.cfg.question_file) is not None
 
-        result = execute_with_self_healing(
-            self.cfg, agent, wt, self._verify_steps_for(state, wt.cwd), prompt, on_question
-        )
+        verify = self._resolve_verify_steps(issue, state, issue.body)
+        if isinstance(verify, StepResult):
+            return verify
+
+        result = execute_with_self_healing(self.cfg, agent, wt, verify, prompt, on_question)
         state.iteration += 1
         state.total_agent_runs += result.attempts
         state.last_agent = agent_name
@@ -437,7 +438,7 @@ class Orchestrator:
 
         pr_body = f'Refs #{issue.number}\n\nAutomated implementation for Issue "{issue.title}".\n'
 
-        # If line 1 already created a spec PR, take it over as the implementation PR.
+        # Reuse an existing PR for the branch (for example, one a human opened manually).
         existing = self.gh.pr_for_branch(state.branch_name)
         if existing:
             pr_url = existing["url"]
@@ -445,7 +446,7 @@ class Orchestrator:
             if existing.get("isDraft"):
                 self.gh.mark_pr_ready(pr_number)
             self.gh.set_pr_body(pr_number, pr_body)
-            action, verb = "pr_updated", "reflected the implementation into the spec PR"
+            action, verb = "pr_updated", "updated the existing PR with the implementation"
             log.info("Issue #%s: reusing existing PR #%s", issue.number, pr_number)
         else:
             try:
@@ -583,7 +584,7 @@ class Orchestrator:
             f'"{issue.title}" has received review comments. Address the feedback below.\n'
             f"This includes not only human reviewers but also review bots "
             f"(CodeRabbit / Copilot, etc.).\n"
-            f"{self._spec_block(state, wt.cwd)}"
+            f"{self._spec_block(issue.number, issue.body)}"
             f"--- review feedback ---\n{review_block}\n--- /review feedback ---\n\n"
             f"On the current working branch, fix the valid points and leave all tests "
             f"passing.\n"
@@ -594,9 +595,11 @@ class Orchestrator:
         def on_question() -> bool:
             return q.check_question_file(wt.cwd, self.cfg.question_file) is not None
 
-        result = execute_with_self_healing(
-            self.cfg, agent, wt, self._verify_steps_for(state, wt.cwd), prompt, on_question
-        )
+        verify = self._resolve_verify_steps(issue, state, issue.body)
+        if isinstance(verify, StepResult):
+            return verify
+
+        result = execute_with_self_healing(self.cfg, agent, wt, verify, prompt, on_question)
         state.iteration += 1
         state.total_agent_runs += result.attempts
         state.last_agent = agent_name
@@ -664,13 +667,17 @@ class Orchestrator:
         prompt_header = (
             f"The PR (#{state.pr_number}) for GitHub Issue #{issue.number} "
             f'"{issue.title}" has merge conflicts with `{self.base_branch}`.'
-            f"{self._spec_block(state, wt.cwd)}"
+            f"{self._spec_block(issue.number, issue.body)}"
         )
+        verify = self._resolve_verify_steps(issue, state, issue.body)
+        if isinstance(verify, StepResult):
+            return verify
+
         result = resolve_conflict_with_agent(
             self.cfg,
             agent,
             wt,
-            self._verify_steps_for(state, wt.cwd),
+            verify,
             self.base_branch,
             state.branch_name,
             prompt_header,
@@ -783,13 +790,17 @@ class Orchestrator:
         prompt_header = (
             f"CI (GitHub Actions) failed on the PR (#{state.pr_number}) for GitHub "
             f'Issue #{issue.number} "{issue.title}".'
-            f"{self._spec_block(state, wt.cwd)}"
+            f"{self._spec_block(issue.number, issue.body)}"
         )
+        verify = self._resolve_verify_steps(issue, state, issue.body)
+        if isinstance(verify, StepResult):
+            return verify
+
         result = fix_ci_with_agent(
             self.cfg,
             agent,
             wt,
-            self._verify_steps_for(state, wt.cwd),
+            verify,
             state.branch_name,
             prompt_header,
             ci_logs,
@@ -1009,66 +1020,35 @@ class Orchestrator:
         self._release_idle(issue, state)
         return StepResult(issue.number, "retry_pending", result.reason)
 
-    def _spec_block(self, state: st.IssueState, worktree: str) -> str:
-        spec = self._load_spec(state, worktree)
-        if not spec.body.strip():
+    def _spec_block(self, issue_number: int, body: str) -> str:
+        text = st.prose(body).strip()
+        if not text:
             return ""
-        # Pass only the body (excluding the front matter / meta) into the prompt.
-        return f"\n--- spec ({state.spec_path}) ---\n{spec.body[:4000]}\n--- /spec ---\n"
+        return f"\n--- spec (issue #{issue_number}) ---\n{text[:4000]}\n--- /spec ---\n"
 
-    def _spec_path_set(self, state: st.IssueState) -> bool:
-        """Whether spec_path is set in the Issue metadata (for the start gate)."""
-        return bool(state.spec_path)
-
-    def _spec_file_in_worktree(self, state: st.IssueState, worktree: str) -> bool:
-        """Whether the actual spec_path file exists in the worktree (for the start gate)."""
-        if not state.spec_path:
-            return False
-        return (Path(worktree) / state.spec_path).is_file()
-
-    def _spec_present(self, state: st.IssueState, worktree: str) -> bool:
-        """Start gate: spec_path is set and the actual file exists in the worktree."""
-        return self._spec_path_set(state) and self._spec_file_in_worktree(state, worktree)
-
-    def _block_for_missing_spec(
-        self, issue: Issue, state: st.IssueState, reason_code: str
-    ) -> StepResult:
-        """Cannot start due to a missing spec. Comments on the Issue, transitions to blocked, and notifies."""
-        if reason_code == "spec_missing":
-            comment = (
-                "🚫 **Cannot start**: no spec is set\n\n"
-                "The Issue's state metadata has no `spec_path`. "
-                "Create a spec and set `spec_path`, then resume."
-            )
-            detail = ""
-        else:
-            comment = (
-                f"🚫 **Cannot start**: the spec is not on the branch\n\n"
-                f"`{state.spec_path}` was not found on the working branch. "
-                f"Commit the spec to the branch, then resume."
-            )
-            detail = state.spec_path
+    def _block_for_missing_spec(self, issue: Issue, state: st.IssueState) -> StepResult:
+        """Cannot start due to a missing GHSWARM_VERIFY block."""
+        comment = (
+            "🚫 **Cannot start**: no spec is set\n\n"
+            "The Issue body has no `GHSWARM_VERIFY` block. "
+            "File a spec with ghswarm-spec (or append the block manually), then resume."
+        )
         self.gh.comment(issue.number, comment)
-        self._enter_blocked(issue, state, reason_code, detail)
-        return StepResult(issue.number, "blocked", reason_code)
+        self._enter_blocked(issue, state, "spec_missing", "")
+        return StepResult(issue.number, "blocked", "spec_missing")
 
-    def _load_spec(self, state: st.IssueState, worktree: str) -> Spec:
-        if not state.spec_path:
-            return Spec()
-        path = Path(worktree) / state.spec_path
-        if not path.is_file():
-            log.warning("spec file not found: %s", path)
-            return Spec()
-        return parse_spec(path.read_text(encoding="utf-8"))
-
-    def _verify_steps_for(self, state: st.IssueState, worktree: str) -> list[ResolvedStep]:
-        """Resolve the spec's verify_steps into steps with cwd/runner already attached.
+    def _verify_steps_for(self, body: str) -> list[ResolvedStep]:
+        """Resolve the Issue body's verify metadata into steps with cwd/runner attached.
 
         Each step's execution environment comes from config's VerifyConfig.sandbox_for,
-        matched by the step's path (None for a legacy, path-less step). If the spec has
-        no verify (or an empty list), this returns an empty list (= skip verification).
+        matched by the step's path (None for a legacy, path-less step). If verify is
+        absent or empty, this returns an empty list (= skip verification).
+
+        Raises ConfigError when the GHSWARM_VERIFY block is malformed or verify
+        normalization fails.
         """
-        steps = self._load_spec(state, worktree).verify_steps
+        meta = st.parse_verify_meta(body)
+        steps = Spec(meta=meta).verify_steps
         return [
             ResolvedStep(
                 path=step.path,
@@ -1077,6 +1057,29 @@ class Orchestrator:
             )
             for step in steps
         ]
+
+    def _resolve_verify_steps(
+        self, issue: Issue, state: st.IssueState, body: str
+    ) -> list[ResolvedStep] | StepResult:
+        """Resolve verify steps from the Issue body, or block with verify_invalid."""
+        try:
+            return self._verify_steps_for(body)
+        except ConfigError as exc:
+            return self._block_for_invalid_verify(issue, state, exc)
+
+    def _block_for_invalid_verify(
+        self, issue: Issue, state: st.IssueState, exc: ConfigError
+    ) -> StepResult:
+        """Malformed GHSWARM_VERIFY metadata. Comments, transitions to blocked, and notifies."""
+        comment = (
+            "🚫 **Cannot start**: invalid verify configuration\n\n"
+            f"The Issue's `GHSWARM_VERIFY` block could not be parsed:\n\n"
+            f"```\n{exc}\n```\n\n"
+            f"Fix the `GHSWARM_VERIFY` block in the Issue body, then resume."
+        )
+        self.gh.comment(issue.number, comment)
+        self._enter_blocked(issue, state, "verify_invalid", str(exc))
+        return StepResult(issue.number, "blocked", "verify_invalid")
 
     def _persist(self, issue: Issue, state: st.IssueState) -> None:
         fresh = self.gh.get_issue(issue.number)

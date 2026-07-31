@@ -22,7 +22,13 @@ BODY = """## Task breakdown
 - [ ] Task C
 """
 
-SPEC_PATH = ".specs/test-spec.md"
+VERIFY_BLOCK = f"""{st.VERIFY_START}
+verify: []
+{st.VERIFY_END}"""
+
+
+def _body_with_verify(base: str = BODY) -> str:
+    return f"{base}\n\n{VERIFY_BLOCK}"
 
 
 class FakeGitHub:
@@ -70,10 +76,14 @@ class FakeWorktreeGit:
     def __init__(self, cwd: str = "/tmp/worktree"):
         self.cwd = cwd
         self.savepoints: list[str] = []
+        self.pushed: list[str] = []
 
     def savepoint(self, message: str) -> bool:
         self.savepoints.append(message)
         return True
+
+    def push(self, branch: str) -> None:
+        self.pushed.append(branch)
 
 
 class Result:
@@ -84,22 +94,12 @@ class Result:
         self.attempts = 1
 
 
-def _write_spec(
-    worktree_root: Path, spec_path: str = SPEC_PATH, *, content: str = "# test\n"
-) -> None:
-    path = worktree_root / spec_path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-
-
 def _orchestrator(
     monkeypatch,
     body: str,
     tmp_path: Path,
     *,
     ok: bool = True,
-    spec_path: str = SPEC_PATH,
-    create_spec: bool = True,
 ):
     calls: list[str] = []
 
@@ -108,9 +108,6 @@ def _orchestrator(
         return Result(ok, "" if ok else "cli_failed")
 
     monkeypatch.setattr("ghswarm.orchestrator.execute_with_self_healing", fake_execute)
-
-    if create_spec:
-        _write_spec(tmp_path, spec_path)
 
     orch = Orchestrator.__new__(Orchestrator)
     orch.cfg = RepoConfig(
@@ -130,17 +127,21 @@ def _orchestrator(
     orch.base_branch = "main"
     orch.dry_run = False
     orch.agent_names = ["implement", "review"]
+    orch._persist = lambda issue, state: None
+    orch._release_idle = lambda issue, state: None
+    orch._record_busy_lease = lambda issue, state: None
     return orch, calls
 
 
-def _state(spec_path: str = SPEC_PATH) -> st.IssueState:
-    return st.IssueState(branch_name="issue-1", spec_path=spec_path)
+def _state() -> st.IssueState:
+    return st.IssueState(branch_name="issue-1")
 
 
 def test_all_unchecked_tasks_go_to_a_single_cli_invocation(monkeypatch, tmp_path):
-    orch, calls = _orchestrator(monkeypatch, BODY, tmp_path)
+    body = _body_with_verify()
+    orch, calls = _orchestrator(monkeypatch, body, tmp_path)
 
-    orch._implement(Issue(number=1, title="Test", body=BODY), _state(), resume=False)
+    orch._implement(Issue(number=1, title="Test", body=body), _state(), resume=False)
 
     assert len(calls) == 1  # not invoked per task
     prompt = calls[0]
@@ -153,10 +154,11 @@ def test_all_unchecked_tasks_go_to_a_single_cli_invocation(monkeypatch, tmp_path
 
 
 def test_success_checks_every_batched_task(monkeypatch, tmp_path):
-    orch, _ = _orchestrator(monkeypatch, BODY, tmp_path)
+    body = _body_with_verify()
+    orch, _ = _orchestrator(monkeypatch, body, tmp_path)
     state = _state()
 
-    result = orch._implement(Issue(number=1, title="Test", body=BODY), state, resume=False)
+    result = orch._implement(Issue(number=1, title="Test", body=body), state, resume=False)
 
     assert st.unchecked(orch.gh.body) == []
     done, total = st.progress(orch.gh.body)
@@ -168,11 +170,22 @@ def test_success_checks_every_batched_task(monkeypatch, tmp_path):
     assert orch.git.ensure_worktree_calls  # the main Git only has ensure_worktree called
 
 
+def test_implement_success_pushes_branch_to_origin(monkeypatch, tmp_path):
+    body = _body_with_verify()
+    orch, _ = _orchestrator(monkeypatch, body, tmp_path)
+    state = st.IssueState(branch_name="issue-1")
+
+    orch._implement(Issue(number=1, title="Test", body=body), state, resume=False)
+
+    assert orch._test_wt.pushed == ["issue-1"]
+
+
 def test_failure_leaves_tasks_unchecked(monkeypatch, tmp_path):
-    orch, _ = _orchestrator(monkeypatch, BODY, tmp_path, ok=False)
+    body = _body_with_verify()
+    orch, _ = _orchestrator(monkeypatch, body, tmp_path, ok=False)
     state = _state()
 
-    result = orch._implement(Issue(number=1, title="Test", body=BODY), state, resume=False)
+    result = orch._implement(Issue(number=1, title="Test", body=body), state, resume=False)
 
     assert result.action == "failed"
     assert len(st.unchecked(orch.gh.body)) == 3  # none are checked off
@@ -180,7 +193,7 @@ def test_failure_leaves_tasks_unchecked(monkeypatch, tmp_path):
 
 
 def test_no_unchecked_tasks_skips_cli_and_goes_to_review(monkeypatch, tmp_path):
-    body = "- [x] Done A\n- [x] Done B\n"
+    body = _body_with_verify("- [x] Done A\n- [x] Done B\n")
     orch, calls = _orchestrator(monkeypatch, body, tmp_path)
     orch.dry_run = True
 
@@ -190,9 +203,9 @@ def test_no_unchecked_tasks_skips_cli_and_goes_to_review(monkeypatch, tmp_path):
     assert "ai_review" in result.detail
 
 
-def test_empty_spec_path_blocks_without_agent(monkeypatch, tmp_path):
-    orch, calls = _orchestrator(monkeypatch, BODY, tmp_path, create_spec=False)
-    state = _state(spec_path="")
+def test_missing_verify_block_blocks_implement_without_agent(monkeypatch, tmp_path):
+    orch, calls = _orchestrator(monkeypatch, BODY, tmp_path)
+    state = _state()
 
     result = orch._implement(Issue(number=1, title="Test", body=BODY), state, resume=False)
 
@@ -204,35 +217,74 @@ def test_empty_spec_path_blocks_without_agent(monkeypatch, tmp_path):
     assert "no spec is set" in orch.gh.comments[0]
 
 
-def test_missing_spec_file_in_worktree_blocks(monkeypatch, tmp_path):
-    orch, calls = _orchestrator(monkeypatch, BODY, tmp_path, create_spec=False)
-    state = _state()
-
-    result = orch._implement(Issue(number=1, title="Test", body=BODY), state, resume=False)
-
-    assert calls == []
-    assert result.action == "blocked"
-    assert result.detail == "spec_not_in_branch"
-    assert state.phase == "blocked"
-    assert orch.gh.comments
-    assert "not on the branch" in orch.gh.comments[0]
-
-
-def test_no_tasks_with_missing_spec_blocks_review_agent(monkeypatch, tmp_path):
+def test_no_tasks_with_missing_verify_blocks_review_agent(monkeypatch, tmp_path):
     body = "- [x] Done A\n- [x] Done B\n"
-    orch, calls = _orchestrator(monkeypatch, body, tmp_path, create_spec=False)
+    orch, calls = _orchestrator(monkeypatch, body, tmp_path)
     state = _state()
 
     result = orch._implement(Issue(number=1, title="Test", body=body), state, resume=False)
 
     assert calls == []
     assert result.action == "blocked"
-    assert result.detail == "spec_not_in_branch"
+    assert result.detail == "spec_missing"
     assert state.phase == "blocked"
 
 
-def test_no_tasks_with_spec_present_goes_to_review(monkeypatch, tmp_path):
-    body = "- [x] Done A\n- [x] Done B\n"
+def test_review_blocks_without_verify_meta(monkeypatch, tmp_path):
+    orch, calls = _orchestrator(monkeypatch, BODY, tmp_path)
+    state = st.IssueState(branch_name="issue-1", next_action="ai_review")
+
+    result = orch._review(Issue(number=1, title="Test", body=BODY), state)
+
+    assert calls == []
+    assert result.action == "blocked"
+    assert result.detail == "spec_missing"
+
+
+def test_review_dry_run_with_missing_verify_does_not_block(monkeypatch, tmp_path):
+    orch, calls = _orchestrator(monkeypatch, BODY, tmp_path)
+    orch.dry_run = True
+    state = st.IssueState(branch_name="issue-1", next_action="ai_review")
+
+    result = orch._review(Issue(number=1, title="Test", body=BODY), state)
+
+    assert calls == []
+    assert result.action == "skipped"
+    assert "spec missing" in result.detail
+    assert state.phase != "blocked"
+    assert orch.gh.comments == []
+
+
+def test_verify_invalid_blocks_implement(monkeypatch, tmp_path):
+    bad_verify = f"{st.VERIFY_START}\nverify: [unclosed\n{st.VERIFY_END}"
+    body = f"{BODY}\n\n{bad_verify}"
+    orch, calls = _orchestrator(monkeypatch, body, tmp_path)
+    state = _state()
+
+    result = orch._implement(Issue(number=1, title="Test", body=body), state, resume=False)
+
+    assert calls == []
+    assert result.action == "blocked"
+    assert result.detail == "verify_invalid"
+    assert state.phase == "blocked"
+    assert any("invalid verify" in c for c in orch.gh.comments)
+
+
+def test_verify_invalid_blocks_review(monkeypatch, tmp_path):
+    bad_verify = f"{st.VERIFY_START}\nverify: [unclosed\n{st.VERIFY_END}"
+    body = f"{bad_verify}"
+    orch, calls = _orchestrator(monkeypatch, body, tmp_path)
+    state = st.IssueState(branch_name="issue-1", next_action="ai_review")
+
+    result = orch._review(Issue(number=1, title="Test", body=body), state)
+
+    assert calls == []
+    assert result.action == "blocked"
+    assert result.detail == "verify_invalid"
+
+
+def test_no_tasks_with_verify_present_goes_to_review(monkeypatch, tmp_path):
+    body = _body_with_verify("- [x] Done A\n- [x] Done B\n")
     orch, calls = _orchestrator(monkeypatch, body, tmp_path)
     state = _state()
     monkeypatch.setattr(

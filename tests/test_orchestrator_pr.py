@@ -1,8 +1,4 @@
-"""Tests for whether the create_pr phase reuses the spec PR (gh/git are not launched).
-
-Line 1 (ghswarm-spec) creates a draft spec PR first, so running `gh pr create` on
-implementation completion would fail with "PR already exists". This guarantees the existing PR can be reused.
-"""
+"""Tests for creating or reusing an implementation PR (gh/git are not launched)."""
 
 from __future__ import annotations
 
@@ -105,10 +101,10 @@ def _orchestrator(existing_pr: dict | None) -> tuple[Orchestrator, FakeGitHub]:
 
 
 def _state() -> st.IssueState:
-    return st.IssueState(branch_name="issue-7", spec_path="", last_agent="claude")
+    return st.IssueState(branch_name="issue-7", last_agent="claude")
 
 
-def test_reuses_draft_spec_pr_and_marks_it_ready():
+def test_reuses_draft_pr_and_marks_it_ready():
     orch, gh = _orchestrator({"number": 12, "url": "https://example.com/pr/12", "isDraft": True})
     result = orch._create_pr(Issue(number=7, title="Test", body="Body"), _state())
 
@@ -129,14 +125,14 @@ def test_reused_pr_that_is_already_ready_is_not_readied_again():
     assert gh.ready_calls == []
 
 
-def test_creates_new_pr_when_no_spec_pr_exists():
-    # e.g. when the spec PR was merged first. Falls back to creating a new one as before.
+def test_creates_new_pr_when_none_exists():
     orch, gh = _orchestrator(None)
     result = orch._create_pr(Issue(number=7, title="Test", body="Body"), _state())
 
     assert len(gh.created) == 1
     assert gh.created[0]["head"] == "issue-7"
     assert gh.created[0]["base"] == "main"
+    assert "Refs #7" in gh.created[0]["body"]
     assert result.action == "pr_created"
 
 

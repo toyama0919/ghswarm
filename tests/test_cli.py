@@ -1323,7 +1323,6 @@ def test_cmd_config_json_output(monkeypatch, tmp_path, capsys):
     cfg = _cfg(labels=["pm-agent"], assignee="@me").repositories["test"]
     cfg.path = str(repo_path)
     cfg.base_branch = "develop"
-    cfg.spec_dir = "specs"
     cfg.branch_prefix = "feat-"
     app = AppConfig(repositories={"test": cfg})
     monkeypatch.setattr(cli, "_load", lambda _args: app)
@@ -1335,7 +1334,6 @@ def test_cmd_config_json_output(monkeypatch, tmp_path, capsys):
         "name": "test",
         "repo": "owner/repo",
         "path": str(repo_path),
-        "spec_dir": "specs",
         "branch_prefix": "feat-",
         "base_branch": "develop",
         "idle_label": "status: idle",
