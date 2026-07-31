@@ -17,7 +17,6 @@ def test_write_then_parse_roundtrip():
         branch_name="issue-7",
         next_action="ai_review",
         iteration=3,
-        spec_path=".specs/2026-07-16-issue-7.md",
     )
     body = st.write_state("# Issue body\n- [ ] task", original)
     restored = st.parse_state(body, 7)
@@ -25,7 +24,18 @@ def test_write_then_parse_roundtrip():
     assert restored.branch_name == "issue-7"
     assert restored.next_action == "ai_review"
     assert restored.iteration == 3
-    assert restored.spec_path == ".specs/2026-07-16-issue-7.md"
+
+
+def test_from_dict_ignores_unknown_keys_like_legacy_spec_path():
+    s = st.IssueState.from_dict(
+        {
+            "phase": "implementing",
+            "branch_name": "issue-7",
+            "spec_path": ".specs/2026-07-16-issue-7.md",
+        }
+    )
+    assert s.phase == "implementing"
+    assert s.branch_name == "issue-7"
 
 
 def test_strip_state_removes_block_but_keeps_human_body():

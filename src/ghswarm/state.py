@@ -44,7 +44,6 @@ class IssueState:
     next_action: str = "start"
     iteration: int = 0
     pending_questions: list[str] = field(default_factory=list)
-    spec_path: str = ""  # .specs/YYYY-MM-DD-issue-N.md (relative to the repo root)
     pr_url: str = ""
     pr_number: int = 0
     merge_commit_sha: str = ""  # sha of the merge commit whose CI is checked post-merge
