@@ -90,7 +90,9 @@ def write_state(body: str, state: IssueState) -> str:
     """Return the body with any existing state block removed and the latest state appended."""
     clean = _STATE_RE.sub("", body or "").rstrip()
     block = f"{STATE_START}\n{state.to_json()}\n{STATE_END}"
-    return f"{clean}\n\n{block}\n"
+    if not clean:
+        return f"{block}\n"
+    return f"{block}\n\n{clean}"
 
 
 def strip_state(body: str) -> str:
