@@ -10,7 +10,7 @@ and **orchestrates multiple coding CLIs** (Claude Code / Codex / Cursor)
 **with mutual exclusion enforced via labels**.
 
 It runs no server (no Webhook/FastAPI); all state is persisted on GitHub (labels + metadata in the Issue body +
-checkboxes) and in spec files. Even if the process dies, reading the Issue lets it **resume from where it left off**.
+checkboxes). The spec prose and verify steps also live in the Issue body (`GHSWARM_VERIFY`). Even if the process dies, reading the Issue lets it **resume from where it left off**.
 
 ## Two-line architecture
 
@@ -18,31 +18,31 @@ checkboxes) and in spec files. Even if the process dies, reading the Issue lets 
 flowchart TB
   subgraph L1["Line 1 · human in the loop (skill: ghswarm-spec, outside the loop)"]
     direction LR
-    A1[draft in tmp/spec/] --> A2[AI review] --> A3[human review] --> A4[create Issue] --> A5[move to .specs/<br/>+ open draft PR]
+    A1[draft in tmp/spec/] --> A2[AI review] --> A3[human review] --> A4[create Issue<br/>+ GHSWARM_VERIFY]
   end
   subgraph L2["Line 2 · ghswarm resident loop (autonomous, this CLI)"]
     direction LR
-    B1[implement on PR branch] --> B2[AI review] --> B3[mark PR ready] --> B4[wait CI/approve] --> B5[auto squash merge]
+    B1[implement on issue-N branch] --> B2[AI review] --> B3[create PR] --> B4[wait CI/approve] --> B5[auto squash merge]
   end
   L1 --> L2
 ```
 
 - **Line 1** is handled by the Claude Code skill [`ghswarm-spec`](.claude/skills/ghswarm-spec/SKILL.md).
-  The spec draft is placed in `tmp/spec/` to await human approval; after approval it moves to `.specs/YYYY-MM-DD-issue-N.md`,
-  is committed on branch `issue-N`, and opens a **draft spec PR** along with an Issue carrying a task checklist.
-- **Line 2** is ghswarm itself. It takes over that spec PR's branch, **stacks implementation commits onto the same PR**,
-  and drives it all the way to auto-merge. Because the spec and the implementation end up in a single PR, it is easy to review.
+  The spec draft is placed in `tmp/spec/` to await human approval; after approval the prose, task checklist, and
+  `GHSWARM_VERIFY` block are written into a GitHub Issue. No spec file is committed and no spec PR is opened.
+- **Line 2** is ghswarm itself. It cuts branch `issue-N`, implements, opens a PR with `Refs #N`, and drives it to auto-merge.
 
 ## Design highlights
 
 - **Mutual exclusion via labels** — `status: busy-<agent>` / `idle` / `blocked` / `completed`.
   Only one CLI runs at a time within the same repository. The lock lives on GitHub, so it is shared across processes.
 - **State persisted in the Issue body** — saved as JSON in an HTML comment at the end of the body
-  (`<!-- GHSWARM_STATE_START ... GHSWARM_STATE_END -->`), holding `next_action` / `branch_name` / `spec_path` / `pr_number` and so on.
+  (`<!-- GHSWARM_STATE_START ... GHSWARM_STATE_END -->`), holding `next_action` / `branch_name` / `pr_number` and so on.
+  Verify steps live in a separate `<!-- GHSWARM_VERIFY_START ... GHSWARM_VERIFY_END -->` block so they survive every state rewrite.
 - **Progress via checkboxes** — `- [ ] task` items in the Issue body are worked through and updated to `- [x]`. Incomplete tasks are
   **handed to a single CLI run all at once** (because each CLI is a one-shot headless invocation that loses its context every time,
   launching one per task would force it to re-read the codebase). Once verify passes, all items are checked.
-- **Spec-driven** — the spec file's body is injected into each implement/review prompt. The agent follows the spec.
+- **Spec-driven** — the Issue body prose (with `GHSWARM_STATE` and `GHSWARM_VERIFY` stripped) is injected into each implement/review prompt. The agent follows the spec.
 - **CLI/model fixed per phase** — the CLI and model used in the `implement` / `review` phases are specified explicitly
   in the config (the `command` under `agents.implement` / `agents.review`). There is no dynamic routing by an LLM.
 - **Self-healing** — CLI run → tests → on failure, retry with the log attached (up to N times). If that fails, `git reset --hard`
@@ -108,7 +108,7 @@ ghswarm skills install --force    # overwrite/update already-installed skills
 ```
 
 - `ghswarm-requirements` — Line 0 (optional): consult on requirements before drafting, then hand off to `ghswarm-spec`.
-- `ghswarm-spec` — Line 1: draft a spec, review it, create the Issue and draft spec PR.
+- `ghswarm-spec` — Line 1: draft a spec, review it, and file a GitHub Issue with `GHSWARM_VERIFY`.
 - `ghswarm-check` — diagnose Issues stuck at `status: blocked` and return safe ones to `idle`.
 
 Re-run `ghswarm skills install --force` after upgrading ghswarm to pull in the latest skill versions.
@@ -190,7 +190,6 @@ in `defaults:` as well as in each repo entry.
 | `path` | (required) | Absolute path to the local clone (`~` allowed) |
 | `base_branch` | `""` | The PR's merge target. Work branches are also cut from here. Empty means auto-detect via `gh` |
 | `branch_prefix` | `"issue-"` | Prefix for work branch names (`issue-N`) |
-| `spec_dir` | `".specs"` | Directory where spec files are placed |
 | `poll_interval` | `60` | Polling interval for `loop` (seconds) |
 | `question_file` | `".agent_question.md"` | File the agent writes clarifications to |
 | `merge_method` | `"squash"` | `squash` / `merge` / `rebase` |
@@ -218,7 +217,7 @@ in `defaults:` as well as in each repo entry.
 | `labels` | defaults below | Status label names |
 | `target` | `{}` | Filter conditions for the Issues to pick up |
 | `notify` | all disabled | Push notifications for blocked, etc. |
-| `verify` | empty registry (`driver: none`) | path -> sandbox registry used to run the spec's verify steps (below) |
+| `verify` | empty registry (`driver: none`) | path -> sandbox registry used to run the Issue's `GHSWARM_VERIFY` steps (below) |
 
 ### agents (required)
 
@@ -265,7 +264,7 @@ agents:
 ### verify (path -> sandbox registry for verification, and per-directory monorepo verify)
 
 `verify` never carries a command — the actual verification steps to run are declared per-Issue in
-the spec's frontmatter `verify:` (see [`ghswarm-spec`'s `SKILL.md`](src/ghswarm/skills/ghswarm-spec/SKILL.md)).
+the `GHSWARM_VERIFY` HTML comment block in the Issue body (see [`ghswarm-spec`'s `SKILL.md`](src/ghswarm/skills/ghswarm-spec/SKILL.md)).
 Config's `verify:` only declares **where** each step runs (locally, or inside which Docker image),
 keyed by directory. This lets a monorepo (e.g. `terraform/` alongside `backend/`) run each directory's
 verification in its own execution environment while a single Issue/PR touches both.
@@ -282,7 +281,7 @@ Two shapes are accepted:
   ```
 
 - **List form** (a monorepo path -> sandbox registry): a list of `{path, sandbox}` mappings, matched
-  by exact string comparison against each verify step's `path` in the spec's frontmatter. If no entry
+  by exact string comparison against each verify step's `path` in the Issue's `GHSWARM_VERIFY` block. If no entry
   matches (or `verify:` is unset), that step falls back to `driver: none` (it does not error).
 
   ```yaml
@@ -312,8 +311,32 @@ Two shapes are accepted:
 Under Docker, the whole worktree is always mounted (never just the step's subdirectory); only the
 container's working directory changes per step, so sibling directories stay visible.
 
-**Migration note**: the old top-level `test_command` / `sandbox` keys have been removed (no backward
-compatibility). A config file still using them raises a `ConfigError` prompting migration to `verify:`.
+**Migration notes**:
+
+- The old top-level `test_command` / `sandbox` keys have been removed (no backward
+  compatibility). A config file still using them raises a `ConfigError` prompting migration to `verify:`.
+- The `spec_dir` key has been removed. Verify steps and spec prose now live in each Issue's
+  `GHSWARM_VERIFY` block and body. Remove `spec_dir` from your config.
+- Existing Issues that still reference a committed `.specs/*.md` file must be migrated manually:
+  append a `GHSWARM_VERIFY` block (transcribing the old frontmatter `verify:`) before upgrading ghswarm.
+  Read the block with `gh issue view <N> --json body -q .body` (it is invisible in the GitHub web UI).
+  Verify command strings must not contain `-->` or `GHSWARM_VERIFY_END` (HTML comment constraints).
+
+### GHSWARM_VERIFY block
+
+ghswarm reads verify steps from an HTML comment in the Issue body, separate from `GHSWARM_STATE`:
+
+```
+<!-- GHSWARM_VERIFY_START
+verify:
+  - uv run --extra dev ruff check .
+  - uv run --extra dev python -m pytest -q
+GHSWARM_VERIFY_END -->
+```
+
+The `verify` schema matches the former spec frontmatter (legacy string/list form, or list of `{path, command}`).
+The **presence** of this block is the start gate (`spec_missing` if absent). An empty `verify:` inside still counts as spec'd.
+Malformed YAML blocks the Issue as `verify_invalid`.
 
 ## Usage
 
@@ -350,6 +373,4 @@ Daemon logs accumulate one file per start date. Manage size at your discretion w
 - Each coding CLI's headless auto-approval flag (`--dangerously-skip-permissions`, etc.) is set at your own risk.
 - With `require_approval: true`, a PR is not merged until it gets an approval. In setups with no approver,
   set it to `false`, or gate on an approve from another agent/human.
-- Place the spec on the work branch `issue-N` (= the spec PR's branch), and **keep the spec PR as a draft; do not merge it**.
-  ghswarm finds and takes over origin's spec PR by branch name. If you merge it first, the spec lands on default, so implementation
-  itself can continue, but the implementation splits off into a separate new PR.
+- ghswarm creates branch `issue-N` and the implementation PR during Line 2. Line 1 (ghswarm-spec) does not cut a branch or open a PR.
