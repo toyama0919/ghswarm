@@ -187,7 +187,7 @@ class RepoConfig:
     # env vars injected into this repo's gh invocations (overrides os.environ per key).
     env: dict[str, str] = field(default_factory=dict)
     # path -> sandbox registry used to run verify steps (see VerifyConfig). Never
-    # carries a command; the steps to run come from the spec frontmatter.
+    # carries a command; the steps to run come from the Issue's GHSWARM_VERIFY block.
     verify: VerifyConfig = field(default_factory=VerifyConfig)
 
     def agent_names(self) -> list[str]:
@@ -274,7 +274,7 @@ verify:
 
 _VERIFY_MIGRATION_EXAMPLE = (
     """'test_command' / top-level 'sandbox' have been removed. Migrate to 'verify:'.
-The command itself now belongs in each spec's frontmatter 'verify:', not in config.
+The command itself now belongs in each Issue's GHSWARM_VERIFY block, not in config.
 """
     + _VERIFY_EXAMPLE
 )
@@ -536,8 +536,8 @@ def _load_verify(raw: dict[str, Any], source: Path) -> VerifyConfig:
         if "command" in block or "path" in block:
             raise ConfigError(
                 f"{source}: single-form 'verify:' must only have 'sandbox' "
-                f"('command' / 'path' are not allowed here; commands belong in the spec's "
-                f"frontmatter).\n{_VERIFY_EXAMPLE}"
+                f"('command' / 'path' are not allowed here; commands belong in the Issue's "
+                f"GHSWARM_VERIFY block).\n{_VERIFY_EXAMPLE}"
             )
         sandbox = _load_sandbox_block(block.get("sandbox"), source, "verify.sandbox")
         return VerifyConfig(single=sandbox)
@@ -554,7 +554,7 @@ def _load_verify(raw: dict[str, Any], source: Path) -> VerifyConfig:
             if "command" in item:
                 raise ConfigError(
                     f"{source}: 'verify[{i}].command' is not allowed in config; the command "
-                    f"belongs in the spec's frontmatter 'verify:'.\n{_VERIFY_EXAMPLE}"
+                    f"belongs in the Issue's GHSWARM_VERIFY block.\n{_VERIFY_EXAMPLE}"
                 )
             path = validate_verify_path(item.get("path", ""), f"{source}: 'verify[{i}].path'")
             if path in seen:

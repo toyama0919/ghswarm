@@ -254,7 +254,6 @@ class Orchestrator:
 
         self._record_busy_lease(issue, state)
         lbl.acquire(self.gh, issue, self.cfg.labels, agent_name, self.agent_names)
-        # The spec lives only on the spec PR's branch, so prepare the worktree before reading it.
         wt = self._ensure_worktree_git(issue.number, state.branch_name)
 
         resume_ctx = ""
@@ -368,6 +367,8 @@ class Orchestrator:
         agent_name = agent.name
 
         if not st.has_verify_meta(issue.body):
+            if self.dry_run:
+                return StepResult(issue.number, "skipped", "[dry-run] cannot start: spec missing")
             return self._block_for_missing_spec(issue, state)
 
         if self.dry_run:
@@ -375,7 +376,6 @@ class Orchestrator:
 
         self._record_busy_lease(issue, state)
         lbl.acquire(self.gh, issue, self.cfg.labels, agent_name, self.agent_names)
-        # The spec lives only on the spec PR's branch, so prepare the worktree before reading it.
         wt = self._ensure_worktree_git(issue.number, state.branch_name)
 
         prompt = (
@@ -438,7 +438,7 @@ class Orchestrator:
 
         pr_body = f'Refs #{issue.number}\n\nAutomated implementation for Issue "{issue.title}".\n'
 
-        # If line 1 already created a spec PR, take it over as the implementation PR.
+        # Reuse an existing PR for the branch (for example, one a human opened manually).
         existing = self.gh.pr_for_branch(state.branch_name)
         if existing:
             pr_url = existing["url"]
@@ -446,7 +446,7 @@ class Orchestrator:
             if existing.get("isDraft"):
                 self.gh.mark_pr_ready(pr_number)
             self.gh.set_pr_body(pr_number, pr_body)
-            action, verb = "pr_updated", "reflected the implementation into the spec PR"
+            action, verb = "pr_updated", "updated the existing PR with the implementation"
             log.info("Issue #%s: reusing existing PR #%s", issue.number, pr_number)
         else:
             try:

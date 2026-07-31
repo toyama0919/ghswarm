@@ -241,6 +241,20 @@ def test_review_blocks_without_verify_meta(monkeypatch, tmp_path):
     assert result.detail == "spec_missing"
 
 
+def test_review_dry_run_with_missing_verify_does_not_block(monkeypatch, tmp_path):
+    orch, calls = _orchestrator(monkeypatch, BODY, tmp_path)
+    orch.dry_run = True
+    state = st.IssueState(branch_name="issue-1", next_action="ai_review")
+
+    result = orch._review(Issue(number=1, title="Test", body=BODY), state)
+
+    assert calls == []
+    assert result.action == "skipped"
+    assert "spec missing" in result.detail
+    assert state.phase != "blocked"
+    assert orch.gh.comments == []
+
+
 def test_verify_invalid_blocks_implement(monkeypatch, tmp_path):
     bad_verify = f"{st.VERIFY_START}\nverify: [unclosed\n{st.VERIFY_END}"
     body = f"{BODY}\n\n{bad_verify}"

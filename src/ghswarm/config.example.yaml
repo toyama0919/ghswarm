@@ -43,8 +43,8 @@ defaults:                    # Shared fallback for all repos (optional)
   post_merge_ci_grace: 180
   worktree_dir: ""
   worktree_setup: ""
-  # verify:                          # path -> sandbox registry used to run the spec's verify steps.
-  #                                   # The command itself is declared per-Issue in the spec's frontmatter,
+  # verify:                          # path -> sandbox registry used to run Issue verify steps.
+  #                                   # The command itself is declared per-Issue in GHSWARM_VERIFY,
   #                                   # not here. Unset = every step runs locally (driver: none).
   #
   # Single form (default for most non-monorepo repos): one sandbox for every step,
@@ -64,7 +64,7 @@ defaults:                    # Shared fallback for all repos (optional)
   #       - .venv                    # Python (uv). Use node_modules for node, target for rust
   #
   # List form (monorepo path -> sandbox registry): matched by exact path against each
-  # verify step's `path` in the spec's frontmatter. No match falls back to driver: none.
+  # verify step's `path` in GHSWARM_VERIFY. No match falls back to driver: none.
   # verify:
   #   - path: terraform
   #     sandbox:
