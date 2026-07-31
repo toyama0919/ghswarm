@@ -35,7 +35,6 @@ defaults:                    # Shared fallback for all repos (optional)
     milestone: ""
   question_file: ".agent_question.md"
   branch_prefix: "issue-"
-  spec_dir: ".specs"
   base_branch: ""
   address_pr_reviews: true
   resolve_review_threads: true

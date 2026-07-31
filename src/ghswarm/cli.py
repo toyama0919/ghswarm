@@ -161,7 +161,6 @@ def cmd_config(args) -> int:
         "name": cfg.name,
         "repo": cfg.repo,
         "path": cfg.path,
-        "spec_dir": cfg.spec_dir,
         "branch_prefix": cfg.branch_prefix,
         "base_branch": base_branch,
         "idle_label": cfg.labels.idle,

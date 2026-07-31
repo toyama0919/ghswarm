@@ -139,7 +139,6 @@ class RepoConfig:
     max_retries: int = 3
     question_file: str = ".agent_question.md"
     branch_prefix: str = "issue-"
-    spec_dir: str = ".specs"
     # branch the PR merges into. Work branches are also cut from here. Auto-detected via gh if empty.
     base_branch: str = ""
     merge_method: str = "squash"  # squash / merge / rebase
@@ -278,6 +277,11 @@ _VERIFY_MIGRATION_EXAMPLE = (
 The command itself now belongs in each spec's frontmatter 'verify:', not in config.
 """
     + _VERIFY_EXAMPLE
+)
+
+_SPEC_DIR_MIGRATION = (
+    "The 'spec_dir' key has been removed. Verify steps and spec prose now live in each "
+    "Issue's GHSWARM_VERIFY block and body. Remove 'spec_dir' from your config."
 )
 
 
@@ -644,6 +648,11 @@ def _candidate_paths(explicit: str | None) -> list[Path]:
     ]
 
 
+def _reject_legacy_spec_dir(raw: dict[str, Any], source: Path, location: str) -> None:
+    if "spec_dir" in raw:
+        raise ConfigError(f"{source}: '{location}' is no longer supported. {_SPEC_DIR_MIGRATION}")
+
+
 def _build_repo_config_from_raw(
     alias: str, repo: str, path: str, raw: dict[str, Any], source: Path
 ) -> RepoConfig:
@@ -670,7 +679,6 @@ def _build_repo_config_from_raw(
         max_retries=int(raw.get("max_retries", 3)),
         question_file=raw.get("question_file", ".agent_question.md"),
         branch_prefix=raw.get("branch_prefix", "issue-"),
-        spec_dir=raw.get("spec_dir", ".specs"),
         base_branch=raw.get("base_branch", ""),
         merge_method=raw.get("merge_method", "squash"),
         require_approval=bool(raw.get("require_approval", True)),
@@ -727,10 +735,12 @@ def load_app_config(explicit: str | None = None) -> AppConfig:
         )
 
     defaults: dict[str, Any] = dict(defaults_raw or {})
+    _reject_legacy_spec_dir(defaults, path, "defaults.spec_dir")
     repositories: dict[str, RepoConfig] = {}
     for alias, entry in repos_raw.items():
         if not isinstance(entry, dict):
             raise ConfigError(f"{path}: 'repositories.{alias}' must be a mapping.")
+        _reject_legacy_spec_dir(entry, path, f"repositories.{alias}.spec_dir")
         repo_name = entry.get("repo")
         repo_path = entry.get("path")
         if not repo_name or not isinstance(repo_name, str):

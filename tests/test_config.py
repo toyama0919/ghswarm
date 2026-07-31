@@ -1234,3 +1234,13 @@ def test_legacy_sandbox_key_raises_migration_config_error(tmp_path):
         load_config(
             _write_config(tmp_path, repo_extra="sandbox:\n  driver: docker\n  image: alpine\n")
         )
+
+
+def test_legacy_spec_dir_in_defaults_raises_migration_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="spec_dir"):
+        load_config(_write_config(tmp_path, defaults_extra='spec_dir: ".specs"\n'))
+
+
+def test_legacy_spec_dir_in_repository_raises_migration_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="spec_dir"):
+        load_config(_write_config(tmp_path, repo_extra='spec_dir: ".specs"\n'))
