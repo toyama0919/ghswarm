@@ -12,10 +12,21 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 
+import yaml
+
+from .config import ConfigError
+
 STATE_START = "<!-- GHSWARM_STATE_START"
 STATE_END = "GHSWARM_STATE_END -->"
 _STATE_RE = re.compile(
     re.escape(STATE_START) + r"\s*(.*?)\s*" + re.escape(STATE_END),
+    re.DOTALL,
+)
+
+VERIFY_START = "<!-- GHSWARM_VERIFY_START"
+VERIFY_END = "GHSWARM_VERIFY_END -->"
+_VERIFY_RE = re.compile(
+    re.escape(VERIFY_START) + r"\s*(.*?)\s*" + re.escape(VERIFY_END),
     re.DOTALL,
 )
 
@@ -86,6 +97,39 @@ def write_state(body: str, state: IssueState) -> str:
 def strip_state(body: str) -> str:
     """Return the "human-written body" portion with the state block stripped out."""
     return _STATE_RE.sub("", body or "").rstrip()
+
+
+def parse_verify_meta(body: str) -> dict:
+    """Parse the GHSWARM_VERIFY block into a metadata dict (e.g. ``{"verify": ...}``).
+
+    Returns ``{}`` when the block is absent. Malformed YAML raises ConfigError so callers
+    can distinguish broken verify from an empty / skipped verify.
+    """
+    m = _VERIFY_RE.search(body or "")
+    if not m:
+        return {}
+    try:
+        meta = yaml.safe_load(m.group(1)) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"GHSWARM_VERIFY block contains invalid YAML: {exc}") from exc
+    if not isinstance(meta, dict):
+        raise ConfigError("GHSWARM_VERIFY block must contain a YAML mapping.")
+    return meta
+
+
+def has_verify_meta(body: str) -> bool:
+    """Whether a GHSWARM_VERIFY block exists (start gate; contents are not checked)."""
+    return _VERIFY_RE.search(body or "") is not None
+
+
+def strip_verify(body: str) -> str:
+    """Return the body with the GHSWARM_VERIFY block removed."""
+    return _VERIFY_RE.sub("", body or "").rstrip()
+
+
+def prose(body: str) -> str:
+    """Human-readable Issue prose with GHSWARM_STATE and GHSWARM_VERIFY stripped."""
+    return strip_verify(strip_state(body))
 
 
 # -- Checkboxes --------------------------------------------------------------
