@@ -340,6 +340,7 @@ class Orchestrator:
         # Success -> mark all of the tasks passed in this batch as [x]
         # (verify passing implies the spec's acceptance criteria are met).
         wt.savepoint(f"issue #{issue.number}: implemented {len(tasks)} task(s)")
+        wt.push(state.branch_name)
         # Refresh the body before replacing it (optimistic locking).
         fresh = self.gh.get_issue(issue.number)
         fresh_stripped = st.strip_state(fresh.body)

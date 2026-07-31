@@ -70,10 +70,14 @@ class FakeWorktreeGit:
     def __init__(self, cwd: str = "/tmp/worktree"):
         self.cwd = cwd
         self.savepoints: list[str] = []
+        self.pushed: list[str] = []
 
     def savepoint(self, message: str) -> bool:
         self.savepoints.append(message)
         return True
+
+    def push(self, branch: str) -> None:
+        self.pushed.append(branch)
 
 
 class Result:
@@ -166,6 +170,17 @@ def test_success_checks_every_batched_task(monkeypatch, tmp_path):
     # savepoint is recorded only on the worktree Git, not on the main Git
     assert orch._test_wt.savepoints  # committed on the worktree side
     assert orch.git.ensure_worktree_calls  # the main Git only has ensure_worktree called
+
+
+def test_implement_success_pushes_branch_to_origin(monkeypatch, tmp_path):
+    verify = f"{st.VERIFY_START}\nverify: []\n{st.VERIFY_END}"
+    body = f"{BODY}\n\n{verify}"
+    orch, _ = _orchestrator(monkeypatch, body, tmp_path)
+    state = st.IssueState(branch_name="issue-1")
+
+    orch._implement(Issue(number=1, title="Test", body=body), state, resume=False)
+
+    assert orch._test_wt.pushed == ["issue-1"]
 
 
 def test_failure_leaves_tasks_unchecked(monkeypatch, tmp_path):
