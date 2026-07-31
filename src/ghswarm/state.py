@@ -97,7 +97,7 @@ def write_state(body: str, state: IssueState) -> str:
 
 def strip_state(body: str) -> str:
     """Return the "human-written body" portion with the state block stripped out."""
-    return _STATE_RE.sub("", body or "").rstrip()
+    return _STATE_RE.sub("", body or "").strip()
 
 
 def parse_verify_meta(body: str) -> dict:
