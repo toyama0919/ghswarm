@@ -8,10 +8,10 @@ description: Line 0 (pre-spec) consultation for deciding system requirements thr
 A skill for **thinking through system requirements with a human before anything gets written down**. It exists because `ghswarm-spec` already assumes a reasonably settled feature request as its input (step 0: "confirm the user's request... ask if unclear") — this skill is what happens *before* that, when the request is still vague, under-specified, or has more than one reasonable shape.
 
 - **Line 0 (this skill)**: dialogue only — clarify the problem, goals, constraints, and options. No files, no Issues, no git.
-- **Line 1 ([`ghswarm-spec`](../ghswarm-spec/SKILL.md))**: drafts into `tmp/spec/` → human review → independent review → Issue + draft spec PR.
-- **Line 2 (ghswarm daemon)**: implementation on that PR's branch → review → auto-merge.
+- **Line 1 ([`ghswarm-spec`](../ghswarm-spec/SKILL.md))**: drafts into `tmp/spec/` → human review → independent review → Issue with `GHSWARM_VERIFY`.
+- **Line 2 (ghswarm daemon)**: cut branch → implement → review → create PR → auto-merge.
 
-This skill produces exactly one artifact: **a plain-language recap in the conversation**, confirmed by the user. It never writes `tmp/spec/`, never touches `.specs/`, never creates or edits an Issue/PR, and never runs git commands. If you find yourself about to draft a spec file, you have moved into `ghswarm-spec`'s territory — hand off instead of continuing here.
+This skill produces exactly one artifact: **a plain-language recap in the conversation**, confirmed by the user. It never writes `tmp/spec/`, never creates or edits an Issue/PR, and never runs git commands. If you find yourself about to draft a spec file or file an Issue, you have moved into `ghswarm-spec`'s territory — hand off instead of continuing here.
 
 ## When to use
 
@@ -63,7 +63,7 @@ If the user wants to keep talking, isn't ready, or the requirement genuinely nee
 
 ## Out of scope (things not to do)
 
-- Writing `tmp/spec/` or `.specs/` files.
+- Writing `tmp/spec/` files (that is `ghswarm-spec`'s job after handoff).
 - Creating or editing GitHub Issues or PRs.
 - Any git operations (branching, committing, pushing).
 - Implementation of any kind.
