@@ -1,6 +1,6 @@
 """State persistence into the Issue body and checkbox (task list) parsing.
 
-State is embedded as JSON in an HTML comment at the end of the Issue body. It is
+State is embedded as JSON in an HTML comment at the top of the Issue body. It is
 invisible to human readers and only the program reads it via a regex. Even if the
 server restarts, reading the Issue fully restores how far work has progressed
 (a Git-driven / Label-driven design).
@@ -87,7 +87,7 @@ def parse_state(body: str, issue_number: int, branch_prefix: str = "issue-") -> 
 
 
 def write_state(body: str, state: IssueState) -> str:
-    """Return the body with any existing state block removed and the latest state appended."""
+    """Return the body with any existing state block removed and the latest state prepended."""
     clean = _STATE_RE.sub("", body or "").rstrip()
     block = f"{STATE_START}\n{state.to_json()}\n{STATE_END}"
     if not clean:
