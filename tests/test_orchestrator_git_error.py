@@ -16,7 +16,11 @@ BODY = """## Task breakdown
 - [ ] Task A
 """
 
-SPEC_PATH = ".specs/test-spec.md"
+VERIFY_BLOCK = f"""{st.VERIFY_START}
+verify: []
+{st.VERIFY_END}"""
+
+BODY_WITH_VERIFY = f"{BODY}\n\n{VERIFY_BLOCK}"
 GIT_ERROR_MSG = "fatal: invalid reference: nonexistent-base"
 
 
@@ -69,13 +73,12 @@ class FakeNotifier:
 
 
 def _body_with_state(state: st.IssueState) -> str:
-    return st.write_state(BODY, state)
+    return st.write_state(BODY_WITH_VERIFY, state)
 
 
 def _state(**kwargs) -> st.IssueState:
     defaults = {
         "branch_name": "issue-1",
-        "spec_path": SPEC_PATH,
         "next_action": "implement",
     }
     defaults.update(kwargs)

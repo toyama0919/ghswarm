@@ -105,7 +105,7 @@ def _orchestrator(existing_pr: dict | None) -> tuple[Orchestrator, FakeGitHub]:
 
 
 def _state() -> st.IssueState:
-    return st.IssueState(branch_name="issue-7", spec_path="", last_agent="claude")
+    return st.IssueState(branch_name="issue-7", last_agent="claude")
 
 
 def test_reuses_draft_spec_pr_and_marks_it_ready():
@@ -137,6 +137,7 @@ def test_creates_new_pr_when_no_spec_pr_exists():
     assert len(gh.created) == 1
     assert gh.created[0]["head"] == "issue-7"
     assert gh.created[0]["base"] == "main"
+    assert "Refs #7" in gh.created[0]["body"]
     assert result.action == "pr_created"
 
 
