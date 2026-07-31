@@ -53,6 +53,20 @@ def test_write_state_replaces_existing_block_without_stacking():
     assert st.parse_state(body, 1).phase == "b"
 
 
+def test_write_state_places_block_before_body():
+    human = "# Title\n- [ ] Do the thing"
+    body = st.write_state(human, st.IssueState(branch_name="issue-1"))
+    assert body.startswith(st.STATE_START)
+    assert body.index(st.STATE_START) < body.index(human)
+
+
+def test_write_state_empty_body_returns_block_only():
+    state = st.IssueState(branch_name="issue-1")
+    body = st.write_state("", state)
+    block = f"{st.STATE_START}\n{state.to_json()}\n{st.STATE_END}"
+    assert body == f"{block}\n"
+
+
 def test_parse_tasks_and_progress():
     body = "- [ ] first\n- [x] second\n  - [ ] nested"
     tasks = st.parse_tasks(body)
