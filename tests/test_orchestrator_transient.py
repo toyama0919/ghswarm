@@ -117,7 +117,9 @@ def test_transient_failure_returns_idle_and_increments_counter(monkeypatch, tmp_
     )
     state = _state(transient_retries=0)
 
-    result = orch._implement(Issue(number=1, title="test", body=BODY_WITH_VERIFY), state, resume=False)
+    result = orch._implement(
+        Issue(number=1, title="test", body=BODY_WITH_VERIFY), state, resume=False
+    )
 
     assert result.action == "retry_pending"
     assert state.transient_retries == 1
@@ -136,7 +138,9 @@ def test_transient_max_retries_escalates_to_blocked(monkeypatch, tmp_path):
     )
     state = _state(transient_retries=3)
 
-    result = orch._implement(Issue(number=1, title="test", body=BODY_WITH_VERIFY), state, resume=False)
+    result = orch._implement(
+        Issue(number=1, title="test", body=BODY_WITH_VERIFY), state, resume=False
+    )
 
     assert result.action == "blocked"
     assert state.transient_retries == 4
@@ -168,7 +172,9 @@ def test_permanent_cli_failed_still_blocks(monkeypatch, tmp_path):
     )
     state = _state(transient_retries=0)
 
-    result = orch._implement(Issue(number=1, title="test", body=BODY_WITH_VERIFY), state, resume=False)
+    result = orch._implement(
+        Issue(number=1, title="test", body=BODY_WITH_VERIFY), state, resume=False
+    )
 
     assert result.action == "failed"
     assert state.phase == "blocked"

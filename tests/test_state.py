@@ -147,7 +147,7 @@ def _verify_block(yaml_body: str) -> str:
 
 
 def test_has_verify_meta_true_when_block_present():
-    body = f"# Issue\n{_verify_block('verify:\n  - echo ok')}"
+    body = "# Issue\n" + _verify_block("verify:\n  - echo ok")
     assert st.has_verify_meta(body)
 
 
@@ -192,7 +192,7 @@ def test_strip_verify_removes_block():
 
 def test_prose_strips_state_and_verify():
     human = "# Title\n- [ ] task"
-    body = st.write_state(f"{human}\n\n{_verify_block('verify:\n  - echo ok')}", st.IssueState())
+    body = st.write_state(human + "\n\n" + _verify_block("verify:\n  - echo ok"), st.IssueState())
     assert st.prose(body) == human
 
 
@@ -209,7 +209,7 @@ def test_verify_survives_repeated_write_state():
 
 
 def test_check_task_correct_with_verify_before_tasks():
-    body = f"{_verify_block('verify:\n  - echo ok')}\n- [ ] alpha\n- [ ] beta"
+    body = _verify_block("verify:\n  - echo ok") + "\n- [ ] alpha\n- [ ] beta"
     task = st.next_unchecked(body)
     assert task is not None
     updated = st.check_task(body, task)
@@ -218,7 +218,7 @@ def test_check_task_correct_with_verify_before_tasks():
 
 
 def test_check_task_correct_with_verify_after_tasks():
-    body = f"- [ ] alpha\n- [ ] beta\n\n{_verify_block('verify:\n  - echo ok')}"
+    body = "- [ ] alpha\n- [ ] beta\n\n" + _verify_block("verify:\n  - echo ok")
     task = st.next_unchecked(body)
     assert task is not None
     updated = st.check_task(body, task)

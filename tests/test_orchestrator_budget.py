@@ -75,6 +75,9 @@ class FakeWorktreeGit:
         self.savepoints.append(message)
         return True
 
+    def push(self, branch: str) -> None:
+        pass
+
 
 def _body_with_state(state: st.IssueState) -> str:
     return st.write_state(_body_with_verify(), state)

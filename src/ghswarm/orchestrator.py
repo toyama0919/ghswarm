@@ -395,9 +395,7 @@ class Orchestrator:
         if isinstance(verify, StepResult):
             return verify
 
-        result = execute_with_self_healing(
-            self.cfg, agent, wt, verify, prompt, on_question
-        )
+        result = execute_with_self_healing(self.cfg, agent, wt, verify, prompt, on_question)
         state.iteration += 1
         state.total_agent_runs += result.attempts
         state.last_agent = agent_name
@@ -601,9 +599,7 @@ class Orchestrator:
         if isinstance(verify, StepResult):
             return verify
 
-        result = execute_with_self_healing(
-            self.cfg, agent, wt, verify, prompt, on_question
-        )
+        result = execute_with_self_healing(self.cfg, agent, wt, verify, prompt, on_question)
         state.iteration += 1
         state.total_agent_runs += result.attempts
         state.last_agent = agent_name
