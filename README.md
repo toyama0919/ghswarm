@@ -345,24 +345,13 @@ Malformed YAML blocks the Issue as `verify_invalid`.
 /ghswarm-spec  ...request...
 
 # Line 2: ghswarm (cwd is arbitrary; the configured path is the base for git operations)
-ghswarm status                     # Issue state across all repos
-ghswarm status -r main             # only alias main
-ghswarm history                    # local event log (latest 50)
-ghswarm history -r main --issue 42 # filter by repo / Issue
-ghswarm run 42 -r main --dry-run # inspect the plan for the next single step
-ghswarm run 42 -r main             # run Issue #42 to completion
-ghswarm run 42 -r main --resume    # resume from awaiting-clarification
-ghswarm loop                       # resident parallel polling across all repos
-ghswarm loop -d                    # background residency (does not occupy the terminal)
-ghswarm loop --stop                # stop the resident daemon
-ghswarm loop -r a -r b             # only aliases a, b
-ghswarm loop --once                # one pass over all repos (for cron)
-
-# After starting the daemon, tail the actual log path shown in the banner
-# tail -f ~/.ghswarm/ghswarm-2026-07-18.log
-
-# cron example (every 5 minutes):  */5 * * * * ghswarm loop --once >> ~/.ghswarm/ghswarm-cron.log 2>&1
+ghswarm status            # Issue state across all repos
+ghswarm run 42 -r myrepo  # run Issue #42 to completion (add --dry-run to preview)
+ghswarm loop              # resident parallel polling across all repos (-d to daemonize)
 ```
+
+Run `ghswarm --help` (or `ghswarm <command> --help`) for the full set of subcommands and flags
+(`history`, `--resume`, `loop --once` for cron, daemon controls, etc.).
 
 **Choosing a residency mode**: `loop -d` (daemon residency) and `loop --once` × cron are mutually exclusive. Use only one.
 Daemon logs accumulate one file per start date. Manage size at your discretion with `logrotate` or similar.
