@@ -19,8 +19,6 @@ tag and the packaged version never drift. `pyproject.toml` is the single source 
 
 ## Prerequisites
 
-- `gh` authenticated with the **personal** account. The remote is `toyama0919`, so export
-  `GH_CONFIG_DIR="$HOME/.config/gh-toyama0919"` for every `gh` command in this skill.
 - Publishing is via PyPI Trusted Publisher (OIDC); no API token is needed. It relies on the
   pending/trusted publisher registered for `ghswarm` and the GitHub `pypi` Environment.
 
@@ -58,9 +56,10 @@ tag and the packaged version never drift. `pyproject.toml` is the single source 
 8. **Tag and push the tag.** `git tag v<new> && git push origin v<new>`. This push is what
    triggers the publish workflow.
 
-9. **Watch the publish.** Find the run (`gh run list --workflow=publish.yml --limit 1`) and
-   `gh run watch <id> --exit-status`. On success, report the PyPI URL
-   `https://pypi.org/project/ghswarm/<new>/`. On failure, surface the failing step's log.
+9. **Confirm the publish.** Pushing the tag triggers the "Publish to PyPI" workflow. Poll PyPI
+   until `<new>` appears: `curl -s -o /dev/null -w "%{http_code}" https://pypi.org/pypi/ghswarm/<new>/json`
+   returns `200`. On success, report the PyPI URL `https://pypi.org/project/ghswarm/<new>/`. If it
+   hasn't published after a few minutes, point the user to the Actions tab to inspect the run.
 
 ## Notes
 
