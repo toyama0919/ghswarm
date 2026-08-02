@@ -7,63 +7,43 @@ description: Release ghswarm to PyPI. Bumps the version in pyproject.toml, commi
 
 Bump version → commit → push tag → GitHub Actions publishes to PyPI.
 
+The whole flow is one script — [`release.sh`](release.sh). It is deterministic, so run it
+rather than doing the steps by hand:
+
+```bash
+.claude/skills/ghswarm-release/release.sh [patch|minor|major|X.Y.Z]
+```
+
+- (none) or `patch` → bump the patch part (`0.1.0` → `0.1.1`)
+- `minor` → `0.2.0`
+- `major` → `1.0.0`
+- an explicit `X.Y.Z` → set that exact version
+
 **The git tag is always derived from `pyproject.toml`'s `version` as `v<version>`**, so the
 tag and the packaged version never drift. `pyproject.toml` is the single source of truth.
 
-## Arguments
+## What the script does
 
-- (none) or `patch` → bump the patch part (`0.1.0` → `0.1.1`)
-- `minor` → `0.1.0` → `0.2.0`
-- `major` → `0.1.0` → `1.0.0`
-- an explicit `X.Y.Z` → set that exact version
-
-## Prerequisites
-
-- Publishing is via PyPI Trusted Publisher (OIDC); no API token is needed. It relies on the
-  pending/trusted publisher registered for `ghswarm` and the GitHub `pypi` Environment.
-
-## Steps
-
-0. **Guard the working state.** All must hold, else stop and report:
-   - On `main`: `git branch --show-current` = `main`.
-   - Clean tree: `git status --porcelain` is empty.
-   - Up to date: `git fetch origin && git rev-parse @` = `git rev-parse @{u}`.
-
-1. **Read the current version** from `pyproject.toml` (`^version = "X.Y.Z"`).
-
-2. **Compute the new version** from the argument (patch/minor/major/explicit).
-
-3. **Guard against collisions** — stop if any is true:
-   - Tag exists locally: `git tag -l "v<new>"` non-empty.
-   - Tag exists on origin: `git ls-remote --tags origin "v<new>"` non-empty.
-   - Already on PyPI: `curl -s -o /dev/null -w "%{http_code}" https://pypi.org/pypi/ghswarm/<new>/json` is `200`.
-
-4. **Edit** the `version = "..."` line in `pyproject.toml` to `<new>`.
-
-5. **Refresh the lockfile.** Run `uv lock` (or `uv sync --extra dev`) so the `ghswarm` entry in
-   `uv.lock` is bumped to `<new>` too. The lockfile and pyproject.toml must be committed together,
-   otherwise `uv.lock` is left with an uncommitted version bump.
-
-6. **Sanity gate.** Run `uv run pytest -q` and `uv run ruff check .`. If either fails, revert the
-   edits (`git checkout pyproject.toml uv.lock`) and stop.
-
-7. **Commit to main and push.** `git add pyproject.toml uv.lock && git commit -m "Release v<new>"`
-   (English, per AGENTS.md), then `git push origin main`.
-   Always stage **both** `pyproject.toml` and `uv.lock` — the version lives in both.
-   Release version bumps commit directly to `main` — this is the intentional exception to the
-   "no direct work on main" rule.
-
-8. **Tag and push the tag.** `git tag v<new> && git push origin v<new>`. This push is what
-   triggers the publish workflow.
-
-9. **Confirm the publish.** Pushing the tag triggers the "Publish to PyPI" workflow. Poll PyPI
-   until `<new>` appears: `curl -s -o /dev/null -w "%{http_code}" https://pypi.org/pypi/ghswarm/<new>/json`
-   returns `200`. On success, report the PyPI URL `https://pypi.org/project/ghswarm/<new>/`. If it
-   hasn't published after a few minutes, point the user to the Actions tab to inspect the run.
+1. Guards the working state: on `main`, clean tree, up to date with origin.
+2. Reads the current version and computes the new one from the argument.
+3. Stops on collision: tag already exists (local/origin) or version already on PyPI.
+4. Edits the `version` line in `pyproject.toml` and refreshes `uv.lock` (`uv lock`).
+5. Sanity gate: `uv run pytest -q` and `uv run ruff check .`; reverts and stops on failure.
+6. Commits both `pyproject.toml` and `uv.lock` to `main` as `Release v<new>`, tags `v<new>`
+   locally, then pushes `main`.
+7. Pushes the tag — this is what triggers the publish workflow.
+8. Polls PyPI (~5 min) until `<new>` appears, then reports `https://pypi.org/project/ghswarm/<new>/`.
 
 ## Notes
 
-- If publish fails with `File already exists`, that version is already on PyPI — bump again and re-run.
-- The workflow builds from the tagged commit, so the version bump commit (step 7) must land on
-  `main` **before** the tag is pushed (step 8). Keep that order.
+- Releasing commits directly to `main` — the intentional exception to the "no direct work on
+  main" rule. The script enforces the commit-before-tag order the publish workflow needs.
+- Publishing is via PyPI Trusted Publisher (OIDC); no API token or `gh` is needed. It relies on
+  the pending/trusted publisher registered for `ghswarm` and the GitHub `pypi` Environment.
 - Confirm the new version with the user before running when the bump level is ambiguous.
+- If publish fails with `File already exists`, that version is already on PyPI — bump again.
+- Exit codes: `0` = published and confirmed; `2` = committed and tagged but PyPI not confirmed
+  within the poll window (the publish is likely still running — check Actions, do **not** re-bump);
+  `1` = a guard/gate failed before anything was pushed.
+- If `main` is pushed but the tag push fails, the tag already exists locally — recover with
+  `git push origin v<new>`; do not re-run the script (it would bump to the next version).
