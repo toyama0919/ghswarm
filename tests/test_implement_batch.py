@@ -296,5 +296,5 @@ def test_no_tasks_with_verify_present_goes_to_review(monkeypatch, tmp_path):
     result = orch._implement(Issue(number=1, title="Test", body=body), state, resume=False)
 
     assert len(calls) == 1
-    assert "review" in calls[0]
+    assert "Spec consistency and correctness" in calls[0]
     assert result.action != "blocked"

@@ -43,7 +43,7 @@ REVIEW_RESPONSE_MARKER = "<!-- ghswarm:review-response -->"
 @dataclass
 class StepResult:
     issue_number: int
-    # skipped / implemented / reviewed / review_addressed / pr_created / pr_updated /
+    # skipped / implemented / simplified / reviewed / review_addressed / pr_created / pr_updated /
     # blocked / failed / completed / merged / retry_pending
     action: str
     detail: str = ""
@@ -205,6 +205,10 @@ class Orchestrator:
 
         if action == "implement":
             return self._implement(issue, state, resume=resume)
+        if action == "simplify":
+            if not self.cfg.simplify_enabled:
+                return self._review(issue, state)
+            return self._simplify(issue, state)
         if action == "ai_review":
             return self._review(issue, state)
         if action == "create_pr":
@@ -228,13 +232,25 @@ class Orchestrator:
             return self._block_for_missing_spec(issue, state)
 
         if not tasks:
-            # No pending tasks -> move on to the AI review phase.
-            log.info("Issue #%s: no unfinished tasks. Transitioning to AI review.", issue.number)
-            state.next_action = "ai_review"
+            # No pending tasks -> move on to simplify (if enabled) or AI review.
+            next_after = "simplify" if self.cfg.simplify_enabled else "ai_review"
+            log.info(
+                "Issue #%s: no unfinished tasks. Transitioning to %s.",
+                issue.number,
+                next_after,
+            )
+            state.next_action = next_after
             if self.dry_run:
-                return StepResult(issue.number, "skipped", "[dry-run] will transition to ai_review")
+                return StepResult(
+                    issue.number,
+                    "skipped",
+                    f"[dry-run] will transition to {next_after}",
+                )
             self._persist(issue, state)
-            return self._review(self.gh.get_issue(issue.number), state)
+            fresh = self.gh.get_issue(issue.number)
+            if next_after == "simplify":
+                return self._simplify(fresh, state)
+            return self._review(fresh, state)
 
         # Pass all unfinished tasks in a single CLI run. Because each CLI invocation is
         # a headless one-shot that loses its context, launching one per task would make
@@ -349,7 +365,9 @@ class Orchestrator:
         remaining = st.next_unchecked(fresh_stripped) is not None
         state.transient_retries = 0
         state.phase = "implementing" if remaining else "implemented"
-        state.next_action = "implement" if remaining else "ai_review"
+        state.next_action = (
+            "implement" if remaining else ("simplify" if self.cfg.simplify_enabled else "ai_review")
+        )
 
         new_body = st.write_state(fresh_stripped, state)
         self.gh.set_body(issue.number, new_body)
@@ -360,6 +378,76 @@ class Orchestrator:
             + "\n".join(f"- {t.text}" for t in tasks),
         )
         return StepResult(issue.number, "implemented", f"{len(tasks)} done ({done}/{total})")
+
+    # -- simplify phase ----------------------------------------------------
+    def _simplify(self, issue: Issue, state: st.IssueState) -> StepResult:
+        agent = self.cfg.agent_for("simplify")
+        agent_name = agent.name
+
+        if not st.has_verify_meta(issue.body):
+            if self.dry_run:
+                return StepResult(issue.number, "skipped", "[dry-run] cannot start: spec missing")
+            return self._block_for_missing_spec(issue, state)
+
+        if self.dry_run:
+            return StepResult(issue.number, "skipped", f"[dry-run] simplify -> {agent_name}")
+
+        self._record_busy_lease(issue, state)
+        lbl.acquire(self.gh, issue, self.cfg.labels, agent_name, self.agent_names)
+        wt = self._ensure_worktree_git(issue.number, state.branch_name)
+
+        prompt = (
+            f'The implementation of GitHub Issue #{issue.number} "{issue.title}" is '
+            f"complete but may still be untidy.\n"
+            f"{self._spec_block(issue.number, issue.body)}"
+            f"On the current working branch, tidy the code without changing behavior:\n"
+            f"- Reuse existing patterns and deduplicate where possible.\n"
+            f"- Remove redundancy and simplify over/under-abstraction (wrong altitude).\n"
+            f"- Improve efficiency where it does not alter behavior.\n"
+            f"Do not change public behavior, output, or API. Do not hunt for bugs "
+            f"(that is the review phase's job). Leave the repository in a state where "
+            f"verify still passes.\n"
+            f"{q.question_prompt_hint(self.cfg.question_file)}"
+        )
+
+        def on_question() -> bool:
+            return q.check_question_file(wt.cwd, self.cfg.question_file) is not None
+
+        verify = self._resolve_verify_steps(issue, state, issue.body)
+        if isinstance(verify, StepResult):
+            return verify
+
+        result = execute_with_self_healing(self.cfg, agent, wt, verify, prompt, on_question)
+        state.iteration += 1
+        state.total_agent_runs += result.attempts
+        state.last_agent = agent_name
+
+        if result.reason == "transient":
+            return self._handle_transient(issue, state, result, wt, agent_name)
+
+        if not result.ok:
+            wt.savepoint(f"WIP: simplify failed (issue #{issue.number})")
+            self.gh.comment(
+                issue.number,
+                f"⚠️ **Simplify failed** ({agent_name}, reason={result.reason}). "
+                f"Human intervention is needed.\n\n"
+                f"The partial changes are left on branch `{state.branch_name}` as a WIP commit.\n\n"
+                f"```\n{result.output[-1500:]}\n```",
+            )
+            self._enter_blocked(issue, state, "simplify_failed", result.reason)
+            return StepResult(issue.number, "failed", result.reason)
+
+        wt.savepoint(f"issue #{issue.number}: simplified")
+        state.transient_retries = 0
+        state.phase = "simplified"
+        state.next_action = "ai_review"
+        self._persist(issue, state)
+        self._release_idle(issue, state)
+        self.gh.comment(
+            issue.number,
+            f"✨ **{agent_name}**: code tidy-up complete. Proceeding to review.",
+        )
+        return self._review(self.gh.get_issue(issue.number), state)
 
     # -- review phase ------------------------------------------------------
     def _review(self, issue: Issue, state: st.IssueState) -> StepResult:
@@ -382,9 +470,20 @@ class Orchestrator:
             f'The implementation of GitHub Issue #{issue.number} "{issue.title}" is '
             f"broadly complete.\n"
             f"{self._spec_block(issue.number, issue.body)}"
-            f"Run the tests against the changes on the current working branch and perform "
-            f"a code review, including checking consistency with the spec.\n"
-            f"Fix any problems and leave all tests passing.\n"
+            f"Review from these perspectives:\n"
+            f"- Spec consistency and correctness\n"
+            f"- Logic and control flow\n"
+            f"- Edge cases, error handling, and test adequacy\n"
+            f"- Fit with existing conventions in this repository\n"
+        )
+        if self.cfg.simplify_enabled:
+            prompt += (
+                "Style/structure cleanups are already handled by the simplify phase, so review "
+                "should not redo them and should focus on the above.\n"
+            )
+        prompt += (
+            f"Run the tests against the changes on the current working branch. "
+            f"Fix any problems you find and leave all tests passing.\n"
             f"{q.question_prompt_hint(self.cfg.question_file)}"
         )
 
