@@ -32,7 +32,7 @@ class AgentConfig:
     the primary command; the rest are fallbacks in order. At runtime the placeholder is
     replaced with the shlex.quote'd prompt.
     Example: ["claude -p {prompt} --dangerously-skip-permissions"]
-    name holds the phase name (implement / review).
+    name holds the phase name (implement / review / simplify when configured).
     """
 
     name: str
@@ -124,7 +124,7 @@ class LabelConfig:
 class RepoConfig:
     """ghswarm settings for a single repository."""
 
-    # phase name (implement / review) -> the agent definition used for that phase.
+    # phase name (implement / review, and optionally simplify) -> agent definition.
     agents: dict[str, AgentConfig]
     # alias under repositories (for selection and log display)
     name: str = ""
@@ -195,12 +195,17 @@ class RepoConfig:
         return list(self.agents.keys())
 
     def agent_for(self, phase: str) -> AgentConfig:
-        """Return the agent assigned to the phase (implement / review).
+        """Return the agent assigned to the phase (implement / review / simplify).
 
         Assumes agents has been validated by load_config(). Constructing a RepoConfig
         directly without validation may raise KeyError; the behavior of that usage is undefined.
         """
         return self.agents[phase]
+
+    @property
+    def simplify_enabled(self) -> bool:
+        """Whether the optional simplify phase is configured."""
+        return "simplify" in self.agents
 
 
 @dataclass
@@ -317,7 +322,7 @@ def _normalize_commands(raw: Any, path: Path, phase: str) -> list[str]:
 
 
 def _load_agents(agents_raw: Any, path: Path) -> dict[str, AgentConfig]:
-    """Extract and validate only the two keys implement / review from agents.
+    """Extract and validate implement / review (required) and simplify (optional) from agents.
 
     All other keys are ignored and not validated. On a violation, raise a ConfigError
     that includes an example fix to guide migration.
@@ -347,6 +352,21 @@ def _load_agents(agents_raw: Any, path: Path) -> dict[str, AgentConfig]:
             )
         agents[phase] = AgentConfig(
             name=phase, commands=_normalize_commands(a["command"], path, phase)
+        )
+    simplify_raw = agents_raw.get("simplify")
+    if simplify_raw is not None:
+        if not isinstance(simplify_raw, dict):
+            raise ConfigError(
+                f"{path}: 'agents.simplify' must be a mapping with a command key "
+                f"(a list or scalar is not allowed).\n{_AGENTS_EXAMPLE}"
+            )
+        if "command" not in simplify_raw:
+            raise ConfigError(
+                f"{path}: 'agents.simplify' is missing the required 'command'.\n{_AGENTS_EXAMPLE}"
+            )
+        agents["simplify"] = AgentConfig(
+            name="simplify",
+            commands=_normalize_commands(simplify_raw["command"], path, "simplify"),
         )
     return agents
 
