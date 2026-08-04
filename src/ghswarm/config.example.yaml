@@ -23,6 +23,8 @@ defaults:                    # Shared fallback for all repos (optional)
         - "claude -p {prompt} --model opus --dangerously-skip-permissions"
     review:
       command: "claude -p {prompt} --model sonnet --dangerously-skip-permissions"
+    # simplify:                              # Optional tidy-up phase between implement and review (disabled by default)
+    #   command: "claude -p {prompt} --model sonnet --dangerously-skip-permissions"
   labels:
     idle: "status: idle"
     blocked: "status: blocked"

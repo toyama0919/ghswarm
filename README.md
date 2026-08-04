@@ -22,7 +22,11 @@ flowchart TB
   end
   subgraph L2["Line 2 · ghswarm resident loop (autonomous, this CLI)"]
     direction LR
-    B1[implement on issue-N branch] --> B2[AI review] --> B3[create PR] --> B4[wait CI/approve] --> B5[auto squash merge]
+    B1[implement on issue-N branch] --> B1a{simplify<br/>enabled?}
+    B1a -->|yes| B1b[simplify]
+    B1a -->|no| B2[AI review]
+    B1b --> B2
+    B2 --> B3[create PR] --> B4[wait CI/approve] --> B5[auto squash merge]
   end
   L1 --> L2
 ```
@@ -43,8 +47,8 @@ flowchart TB
   **handed to a single CLI run all at once** (because each CLI is a one-shot headless invocation that loses its context every time,
   launching one per task would force it to re-read the codebase). Once verify passes, all items are checked.
 - **Spec-driven** — the Issue body prose (with `GHSWARM_STATE` and `GHSWARM_VERIFY` stripped) is injected into each implement/review prompt. The agent follows the spec.
-- **CLI/model fixed per phase** — the CLI and model used in the `implement` / `review` phases are specified explicitly
-  in the config (the `command` under `agents.implement` / `agents.review`). There is no dynamic routing by an LLM.
+- **CLI/model fixed per phase** — the CLI and model used in the `implement` / `review` phases (and optionally `simplify`) are specified explicitly
+  in the config (the `command` under `agents.implement` / `agents.review` / `agents.simplify`). There is no dynamic routing by an LLM.
 - **Self-healing** — CLI run → tests → on failure, retry with the log attached (up to N times). If that fails, `git reset --hard`
   rolls back, sets `status: blocked`, and escalates to a human.
 - **Clarification** — if the spec is unclear during implementation, the agent writes `.agent_question.md` and exits. ghswarm comments on the Issue,
@@ -68,7 +72,9 @@ stateDiagram-v2
 
     [*] --> implement
     implement --> implement: tasks remain
-    implement --> ai_review: tasks done
+    implement --> simplify: tasks done (simplify enabled)
+    implement --> ai_review: tasks done (no simplify)
+    simplify --> ai_review
     implement --> clarify: spec unclear
     ai_review --> create_pr
     create_pr --> wait_ci
