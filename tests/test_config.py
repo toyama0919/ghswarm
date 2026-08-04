@@ -388,6 +388,83 @@ def test_extra_agent_keys_are_ignored(tmp_path):
     )
     cfg = _repo(load_config(path))
     assert cfg.agent_names() == ["implement", "review"]
+    assert not cfg.simplify_enabled
+
+
+def test_simplify_present_loads_agent_and_enables_flag(tmp_path):
+    path = _write_raw(
+        tmp_path,
+        """
+        repositories:
+          test:
+            repo: owner/repo
+            path: /tmp/repo
+            agents:
+              implement:
+                command: "claude -p {prompt}"
+              review:
+                command: "claude -p {prompt}"
+              simplify:
+                command: "cursor-agent -p {prompt}"
+        """,
+    )
+    cfg = _repo(load_config(path))
+    assert cfg.simplify_enabled
+    assert "simplify" in cfg.agents
+    assert cfg.agent_names() == ["implement", "review", "simplify"]
+    assert cfg.agent_for("simplify").commands == ["cursor-agent -p {prompt}"]
+
+
+def test_simplify_absent_not_in_agents(tmp_path):
+    app = load_config(_write_config(tmp_path))
+    cfg = _repo(app)
+    assert not cfg.simplify_enabled
+    assert "simplify" not in cfg.agents
+    assert cfg.agent_names() == ["implement", "review"]
+
+
+def test_simplify_missing_command_raises_config_error(tmp_path):
+    path = _write_raw(
+        tmp_path,
+        """
+        repositories:
+          test:
+            repo: owner/repo
+            path: /tmp/repo
+            agents:
+              implement:
+                command: "claude -p {prompt}"
+              review:
+                command: "claude -p {prompt}"
+              simplify:
+                model: sonnet
+        """,
+    )
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert "simplify" in str(e.value)
+
+
+def test_simplify_empty_command_raises_config_error(tmp_path):
+    path = _write_raw(
+        tmp_path,
+        """
+        repositories:
+          test:
+            repo: owner/repo
+            path: /tmp/repo
+            agents:
+              implement:
+                command: "claude -p {prompt}"
+              review:
+                command: "claude -p {prompt}"
+              simplify:
+                command: ""
+        """,
+    )
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert "simplify" in str(e.value)
 
 
 def test_orchestrator_prefers_explicit_base_branch(tmp_path, monkeypatch):
