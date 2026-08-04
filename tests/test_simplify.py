@@ -218,8 +218,10 @@ def test_review_prompt_includes_delegation_when_simplify_enabled(monkeypatch, tm
     orch._review(Issue(number=1, title="Test", body=body), state)
 
     prompt = calls[0][1]
-    assert "simplify phase" in prompt
-    assert "do not redo them" in prompt
+    assert (
+        "Style/structure cleanups are already handled by the simplify phase, so review "
+        "should not redo them and should focus on the above." in prompt
+    )
 
 
 def test_review_prompt_omits_delegation_when_simplify_disabled(monkeypatch, tmp_path):

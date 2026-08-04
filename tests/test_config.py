@@ -445,6 +445,27 @@ def test_simplify_missing_command_raises_config_error(tmp_path):
     assert "simplify" in str(e.value)
 
 
+def test_simplify_null_raises_config_error(tmp_path):
+    path = _write_raw(
+        tmp_path,
+        """
+        repositories:
+          test:
+            repo: owner/repo
+            path: /tmp/repo
+            agents:
+              implement:
+                command: "claude -p {prompt}"
+              review:
+                command: "claude -p {prompt}"
+              simplify: null
+        """,
+    )
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert "agents.simplify" in str(e.value)
+
+
 def test_simplify_empty_command_raises_config_error(tmp_path):
     path = _write_raw(
         tmp_path,

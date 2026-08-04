@@ -366,9 +366,7 @@ class Orchestrator:
         state.transient_retries = 0
         state.phase = "implementing" if remaining else "implemented"
         state.next_action = (
-            "implement"
-            if remaining
-            else ("simplify" if self.cfg.simplify_enabled else "ai_review")
+            "implement" if remaining else ("simplify" if self.cfg.simplify_enabled else "ai_review")
         )
 
         new_body = st.write_state(fresh_stripped, state)
@@ -407,7 +405,8 @@ class Orchestrator:
             f"- Remove redundancy and simplify over/under-abstraction (wrong altitude).\n"
             f"- Improve efficiency where it does not alter behavior.\n"
             f"Do not change public behavior, output, or API. Do not hunt for bugs "
-            f"(that is the review phase's job). Leave all tests passing.\n"
+            f"(that is the review phase's job). Leave the repository in a state where "
+            f"verify still passes.\n"
             f"{q.question_prompt_hint(self.cfg.question_file)}"
         )
 
@@ -479,8 +478,8 @@ class Orchestrator:
         )
         if self.cfg.simplify_enabled:
             prompt += (
-                "Style and structure cleanups are already handled by the simplify phase, "
-                "so do not redo them; focus on the perspectives above.\n"
+                "Style/structure cleanups are already handled by the simplify phase, so review "
+                "should not redo them and should focus on the above.\n"
             )
         prompt += (
             f"Run the tests against the changes on the current working branch. "

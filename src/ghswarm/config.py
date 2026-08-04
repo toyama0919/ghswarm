@@ -353,8 +353,8 @@ def _load_agents(agents_raw: Any, path: Path) -> dict[str, AgentConfig]:
         agents[phase] = AgentConfig(
             name=phase, commands=_normalize_commands(a["command"], path, phase)
         )
-    simplify_raw = agents_raw.get("simplify")
-    if simplify_raw is not None:
+    if "simplify" in agents_raw:
+        simplify_raw = agents_raw["simplify"]
         if not isinstance(simplify_raw, dict):
             raise ConfigError(
                 f"{path}: 'agents.simplify' must be a mapping with a command key "

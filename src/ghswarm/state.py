@@ -39,7 +39,7 @@ class IssueState:
     phase: str = "initial"
     branch_name: str = ""
     last_agent: str | None = None
-    # start / implement / ai_review / create_pr / wait_ci / verify_merge / done /
+    # start / implement / simplify / ai_review / create_pr / wait_ci / verify_merge / done /
     # wait_for_clarification
     next_action: str = "start"
     iteration: int = 0
