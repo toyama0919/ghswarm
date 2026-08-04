@@ -471,9 +471,20 @@ class Orchestrator:
             f'The implementation of GitHub Issue #{issue.number} "{issue.title}" is '
             f"broadly complete.\n"
             f"{self._spec_block(issue.number, issue.body)}"
-            f"Run the tests against the changes on the current working branch and perform "
-            f"a code review, including checking consistency with the spec.\n"
-            f"Fix any problems and leave all tests passing.\n"
+            f"Review from these perspectives:\n"
+            f"- Spec consistency and correctness\n"
+            f"- Logic and control flow\n"
+            f"- Edge cases, error handling, and test adequacy\n"
+            f"- Fit with existing conventions in this repository\n"
+        )
+        if self.cfg.simplify_enabled:
+            prompt += (
+                "Style and structure cleanups are already handled by the simplify phase, "
+                "so do not redo them; focus on the perspectives above.\n"
+            )
+        prompt += (
+            f"Run the tests against the changes on the current working branch. "
+            f"Fix any problems you find and leave all tests passing.\n"
             f"{q.question_prompt_hint(self.cfg.question_file)}"
         )
 
