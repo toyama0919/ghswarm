@@ -17,6 +17,7 @@ class FakeGitHub:
         self.ready_calls: list[int] = []
         self.pr_bodies: dict[int, str] = {}
         self.comments: list[str] = []
+        self.issue_body = "Body"
 
     def pr_for_branch(self, head: str):
         return self.existing_pr
@@ -35,10 +36,10 @@ class FakeGitHub:
         self.pr_bodies[number] = body
 
     def get_issue(self, number: int) -> Issue:
-        return Issue(number=number, title="Test", body="Body", labels=[])
+        return Issue(number=number, title="Test", body=self.issue_body, labels=[])
 
     def set_body(self, number: int, body: str) -> None:
-        pass
+        self.issue_body = body
 
     def comment(self, number: int, body: str) -> None:
         self.comments.append(body)
@@ -134,6 +135,25 @@ def test_creates_new_pr_when_none_exists():
     assert gh.created[0]["base"] == "main"
     assert "Refs #7" in gh.created[0]["body"]
     assert result.action == "pr_created"
+
+
+def test_issue_body_gets_a_visible_pr_link():
+    orch, gh = _orchestrator(None)
+    orch._create_pr(Issue(number=7, title="Test", body="Body"), _state())
+
+    assert "PR: https://example.com/pr/99" in gh.issue_body
+    # sits below the state block so the link is the first visible line
+    assert gh.issue_body.index(st.STATE_START) < gh.issue_body.index(st.PR_LINK_START)
+    assert st.prose(gh.issue_body) == "Body"
+
+
+def test_pr_link_is_not_duplicated_across_persists():
+    orch, gh = _orchestrator(None)
+    state = _state()
+    orch._create_pr(Issue(number=7, title="Test", body="Body"), state)
+    orch._persist(Issue(number=7, title="Test", body=gh.issue_body), state)
+
+    assert gh.issue_body.count(st.PR_LINK_START) == 1
 
 
 def test_state_points_at_the_reused_pr():

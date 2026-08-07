@@ -30,6 +30,15 @@ _VERIFY_RE = re.compile(
     re.DOTALL,
 )
 
+# Unlike the two blocks above, the contents here are meant to be *visible*: the
+# markers only delimit the region so it can be rewritten in place.
+PR_LINK_START = "<!-- GHSWARM_PR_LINK_START -->"
+PR_LINK_END = "<!-- GHSWARM_PR_LINK_END -->"
+_PR_LINK_RE = re.compile(
+    re.escape(PR_LINK_START) + r".*?" + re.escape(PR_LINK_END) + r"\n*",
+    re.DOTALL,
+)
+
 # Checkbox: "- [ ] task" / "- [x] task" (indentation allowed)
 _TASK_RE = re.compile(r"^(?P<indent>\s*)-\s*\[(?P<mark>[ xX])\]\s*(?P<text>.+?)\s*$", re.MULTILINE)
 
@@ -100,6 +109,26 @@ def strip_state(body: str) -> str:
     return _STATE_RE.sub("", body or "").strip()
 
 
+def strip_pr_link(body: str) -> str:
+    """Return the body with the PR link block removed."""
+    return _PR_LINK_RE.sub("", body or "")
+
+
+def write_pr_link(body: str, pr_url: str) -> str:
+    """Return the body with a visible ``PR: <url>`` line prepended.
+
+    Any existing block is replaced, so repeated calls do not stack. An empty
+    ``pr_url`` just removes the block (the PR is not known yet).
+    """
+    clean = strip_pr_link(body).lstrip("\n")
+    if not pr_url:
+        return clean
+    block = f"{PR_LINK_START}\nPR: {pr_url}\n{PR_LINK_END}"
+    if not clean.strip():
+        return f"{block}\n"
+    return f"{block}\n\n{clean}"
+
+
 def parse_verify_meta(body: str) -> dict:
     """Parse the GHSWARM_VERIFY block into a metadata dict (e.g. ``{"verify": ...}``).
 
@@ -129,8 +158,8 @@ def strip_verify(body: str) -> str:
 
 
 def prose(body: str) -> str:
-    """Human-readable Issue prose with GHSWARM_STATE and GHSWARM_VERIFY stripped."""
-    return strip_verify(strip_state(body))
+    """Human-readable Issue prose with the ghswarm-managed blocks stripped."""
+    return strip_verify(strip_pr_link(strip_state(body))).strip()
 
 
 # -- Checkboxes --------------------------------------------------------------

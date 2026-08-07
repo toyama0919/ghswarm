@@ -252,6 +252,66 @@ def test_verify_survives_repeated_write_state():
     assert st.prose(body) == human
 
 
+def test_write_pr_link_prepends_visible_line():
+    human = "# Title\n- [ ] task"
+    body = st.write_pr_link(human, "https://github.com/o/r/pull/9")
+    assert body.startswith(st.PR_LINK_START)
+    assert "PR: https://github.com/o/r/pull/9" in body
+    assert body.endswith(human)
+
+
+def test_write_pr_link_replaces_without_stacking():
+    body = st.write_pr_link("# Title", "https://github.com/o/r/pull/9")
+    body = st.write_pr_link(body, "https://github.com/o/r/pull/10")
+    assert body.count(st.PR_LINK_START) == 1
+    assert "pull/9" not in body
+    assert "pull/10" in body
+
+
+def test_write_pr_link_empty_url_removes_block():
+    human = "# Title"
+    body = st.write_pr_link(human, "https://github.com/o/r/pull/9")
+    assert st.write_pr_link(body, "") == human
+
+
+def test_write_pr_link_empty_body_returns_block_only():
+    body = st.write_pr_link("", "https://github.com/o/r/pull/9")
+    assert body == f"{st.PR_LINK_START}\nPR: https://github.com/o/r/pull/9\n{st.PR_LINK_END}\n"
+
+
+def test_pr_link_sits_below_state_block_after_write_state():
+    human = "# Title\n- [ ] task"
+    body = st.write_pr_link(human, "https://github.com/o/r/pull/9")
+    body = st.write_state(body, st.IssueState(branch_name="issue-1"))
+    assert body.index(st.STATE_START) < body.index(st.PR_LINK_START) < body.index(human)
+
+
+def test_pr_link_survives_repeated_write_state():
+    human = "# Title\n- [ ] task"
+    state = st.IssueState(branch_name="issue-1")
+    body = st.write_pr_link(human, "https://github.com/o/r/pull/9")
+    for _ in range(3):
+        body = st.write_state(st.strip_state(body), state)
+    assert body.count(st.PR_LINK_START) == 1
+    assert st.prose(body) == human
+
+
+def test_prose_strips_pr_link():
+    human = "# Title\n- [ ] task"
+    body = st.write_state(st.write_pr_link(human, "https://github.com/o/r/pull/9"), st.IssueState())
+    assert st.prose(body) == human
+
+
+def test_tasks_unaffected_by_pr_link_block():
+    body = st.write_pr_link("- [ ] alpha\n- [ ] beta", "https://github.com/o/r/pull/9")
+    task = st.next_unchecked(body)
+    assert task is not None
+    assert task.text == "alpha"
+    updated = st.check_task(body, task)
+    assert "- [x] alpha" in updated
+    assert "- [ ] beta" in updated
+
+
 def test_check_task_correct_with_verify_before_tasks():
     body = _verify_block("verify:\n  - echo ok") + "\n- [ ] alpha\n- [ ] beta"
     task = st.next_unchecked(body)
