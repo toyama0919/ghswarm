@@ -76,10 +76,12 @@ stateDiagram-v2
     implement --> ai_review: tasks done (no simplify)
     simplify --> ai_review
     implement --> clarify: spec unclear
+    implement --> blocked: run budget exhausted
     ai_review --> create_pr
     create_pr --> wait_ci
     wait_ci --> verify_merge: CI green + approve
     wait_ci --> blocked: CI failed
+    wait_ci --> blocked: run budget exhausted
     verify_merge --> done: post-merge CI green
     verify_merge --> blocked: post-merge CI failed
     clarify --> implement: answer + --resume
