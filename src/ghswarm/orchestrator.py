@@ -369,7 +369,8 @@ class Orchestrator:
             "implement" if remaining else ("simplify" if self.cfg.simplify_enabled else "ai_review")
         )
 
-        new_body = st.write_state(fresh_stripped, state)
+        # write_pr_link only after check_tasks: it shifts the offsets the task spans use.
+        new_body = st.write_state(st.write_pr_link(fresh_stripped, state.pr_url), state)
         self.gh.set_body(issue.number, new_body)
         self._release_idle(issue, state)
         self.gh.comment(
@@ -1182,8 +1183,8 @@ class Orchestrator:
 
     def _persist(self, issue: Issue, state: st.IssueState) -> None:
         fresh = self.gh.get_issue(issue.number)
-        new_body = st.write_state(st.strip_state(fresh.body), state)
-        self.gh.set_body(issue.number, new_body)
+        body = st.write_pr_link(st.strip_state(fresh.body), state.pr_url)
+        self.gh.set_body(issue.number, st.write_state(body, state))
 
     def _notifier_for(self) -> Notifier:
         notifier = getattr(self, "_notifier", None)
