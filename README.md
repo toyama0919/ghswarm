@@ -51,6 +51,10 @@ flowchart TB
   in the config (the `command` under `agents.implement` / `agents.review` / `agents.simplify`). There is no dynamic routing by an LLM.
 - **Self-healing** — CLI run → tests → on failure, retry with the log attached (up to N times). If that fails, `git reset --hard`
   rolls back, sets `status: blocked`, and escalates to a human.
+- **Resilient to transient GitHub API errors** — `gh` calls retry with exponential backoff on network hiccups and 5xx
+  responses (operations that are not idempotent — posting a comment, opening a PR, merging — are never retried).
+  Status label transitions add the new label *before* removing the old one, so an Issue is never left without a status
+  label; should one lose it anyway, the next cycle restores `status: idle` as long as the body still holds a state block.
 - **Clarification** — if the spec is unclear during implementation, the agent writes `.agent_question.md` and exits. ghswarm comments on the Issue,
   sets `status: blocked`, and once an answer is posted it resumes with `--resume`.
 - **CI/approve gate → auto-merge → post-merge CI gate** — after the PR is created, it polls as `wait_ci`.

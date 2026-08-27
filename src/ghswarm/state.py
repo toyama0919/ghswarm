@@ -95,6 +95,11 @@ def parse_state(body: str, issue_number: int, branch_prefix: str = "issue-") -> 
     return IssueState(branch_name=f"{branch_prefix}{issue_number}")
 
 
+def has_state(body: str) -> bool:
+    """Whether the body carries a ghswarm state block (i.e. ghswarm has worked on it)."""
+    return bool(_STATE_RE.search(body or ""))
+
+
 def write_state(body: str, state: IssueState) -> str:
     """Return the body with any existing state block removed and the latest state prepended."""
     clean = _STATE_RE.sub("", body or "").rstrip()

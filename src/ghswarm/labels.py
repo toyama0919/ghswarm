@@ -97,10 +97,16 @@ def is_locked(issue: Issue, labels: LabelConfig, agent_names: list[str]) -> str 
     return None
 
 
-def clear_status_labels(
-    gh: GitHub, issue: Issue, labels: LabelConfig, agent_names: list[str]
+def set_status(
+    gh: GitHub, issue: Issue, labels: LabelConfig, status: str, agent_names: list[str]
 ) -> None:
-    """Remove all currently attached status labels.
+    """Switch the Issue's status label to `status`, add-first then remove the others.
+
+    The new label is added *before* the old ones are removed on purpose: a status label
+    is what marks the Issue as managed by ghswarm, so if a transient GitHub API error
+    hits between removal and addition the Issue ends up with no status label at all and
+    is then skipped forever. Adding first means the worst case is two status labels
+    briefly coexisting, which the stale-lock reclaim path recovers from.
 
     The current state on GitHub is treated as authoritative. The issue argument is a
     snapshot taken at the start of process() and does not reflect the busy label added
@@ -108,9 +114,10 @@ def clear_status_labels(
     while idle is added, after which the Issue is permanently treated as locked and
     skipped (this recurs after every completed task).
     """
+    gh.add_label(issue.number, status)
     current = set(gh.get_issue(issue.number).labels)
     for l in labels.all_status(agent_names):
-        if l in current:
+        if l != status and l in current:
             gh.remove_label(issue.number, l)
 
 
@@ -118,8 +125,7 @@ def acquire(
     gh: GitHub, issue: Issue, labels: LabelConfig, agent: str, agent_names: list[str]
 ) -> None:
     """Acquire the lock by setting the busy-{agent} label."""
-    clear_status_labels(gh, issue, labels, agent_names)
-    gh.add_label(issue.number, labels.busy(agent))
+    set_status(gh, issue, labels, labels.busy(agent), agent_names)
     log.info("Locked Issue #%s: %s", issue.number, labels.busy(agent))
 
 
@@ -127,8 +133,7 @@ def release(
     gh: GitHub, issue: Issue, labels: LabelConfig, status: str, agent_names: list[str]
 ) -> None:
     """Release the lock and transition to the given status (idle/blocked/completed)."""
-    clear_status_labels(gh, issue, labels, agent_names)
-    gh.add_label(issue.number, status)
+    set_status(gh, issue, labels, status, agent_names)
     log.info("Released Issue #%s: %s", issue.number, status)
 
 
