@@ -12,7 +12,7 @@ import pytest
 from ghswarm import labels as lbl
 from ghswarm import state as st
 from ghswarm.config import LabelConfig
-from ghswarm.github import Issue
+from ghswarm.github import GitHubError, Issue
 
 AGENTS = ["claude", "cursor"]
 HOST = "testhost"
@@ -26,15 +26,21 @@ class FakeGitHub:
 
     def __init__(self, labels: list[str]):
         self.current = list(labels)
+        # optional hook recording ("add"/"remove", label) in call order
+        self.on_call = None
 
     def get_issue(self, number: int) -> Issue:
         return Issue(number=number, title="t", body="b", labels=list(self.current))
 
     def add_label(self, number: int, label: str) -> None:
+        if self.on_call:
+            self.on_call(("add", label))
         if label not in self.current:
             self.current.append(label)
 
     def remove_label(self, number: int, label: str) -> None:
+        if self.on_call:
+            self.on_call(("remove", label))
         if label in self.current:
             self.current.remove(label)
 
@@ -96,6 +102,36 @@ def test_release_to_blocked_clears_busy():
     assert gh.current == ["pm-agent", "status: blocked"]
     # blocked is itself a lock, so is_locked returns blocked
     assert lbl.is_locked(gh.get_issue(8), cfg, AGENTS) == "status: blocked"
+
+
+def test_release_keeps_a_status_label_when_adding_the_new_one_fails():
+    # Regression guard for the wedge: a transient GitHub API error while switching the
+    # status label must never leave the Issue with no status label at all -- an Issue
+    # without one is treated as unmanaged and skipped forever.
+    class FailingAdd(FakeGitHub):
+        def add_label(self, number: int, label: str) -> None:
+            raise GitHubError("connection reset by peer")
+
+    gh = FailingAdd(["pm-agent", "status: busy-claude"])
+    cfg = LabelConfig()
+
+    with pytest.raises(GitHubError):
+        lbl.release(gh, _stale_snapshot(), cfg, cfg.idle, AGENTS)
+
+    assert gh.current == ["pm-agent", "status: busy-claude"]
+    assert any(cfg.is_status_label(l) for l in gh.current)
+
+
+def test_release_adds_the_new_status_before_removing_the_old_one():
+    gh = FakeGitHub(["pm-agent", "status: busy-claude"])
+    cfg = LabelConfig()
+    order: list[tuple[str, str]] = []
+    gh.on_call = order.append
+
+    lbl.release(gh, _stale_snapshot(), cfg, cfg.idle, AGENTS)
+
+    assert order[0] == ("add", "status: idle")
+    assert ("remove", "status: busy-claude") in order[1:]
 
 
 # -- is_stale (pure function) -----------------------------------------------

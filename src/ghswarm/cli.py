@@ -238,19 +238,28 @@ def cmd_skills_install(args) -> int:
     return 0
 
 
-def _target_issues(cfg: RepoConfig, gh: GitHub):
+def _filtered_issues(cfg: RepoConfig, gh: GitHub):
+    """Open Issues matching the target filter, oldest first (status label not required)."""
     t = cfg.target
     issues = gh.list_open_issues(
         labels=t.labels or None,
         assignee=t.assignee,
         milestone=t.milestone,
     )
-    # Issues created via the ghswarm-spec skill carry at least idle. Exclude any Issue
-    # with no status label as unmanaged by ghswarm (judged from the labels: config values,
-    # not dependent on the literal "status:" string).
-    managed = [i for i in issues if any(cfg.labels.is_status_label(lb) for lb in i.labels)]
     # Issue numbers increase monotonically, so ascending number = oldest first. Start with the oldest.
-    return sorted(managed, key=lambda i: i.number)
+    return sorted(issues, key=lambda i: i.number)
+
+
+def _is_managed(cfg: RepoConfig, issue) -> bool:
+    """Whether the Issue carries a status label (judged from the labels: config values,
+    not dependent on the literal "status:" string)."""
+    return any(cfg.labels.is_status_label(lb) for lb in issue.labels)
+
+
+def _target_issues(cfg: RepoConfig, gh: GitHub):
+    # Issues created via the ghswarm-spec skill carry at least idle. Exclude any Issue
+    # with no status label as unmanaged by ghswarm.
+    return [i for i in _filtered_issues(cfg, gh) if _is_managed(cfg, i)]
 
 
 # Polling-oriented phases that wait for CI or a human reply. These are not counted as
@@ -319,18 +328,50 @@ def _run_to_completion(
     return 1
 
 
-def _phase_kind(cfg: RepoConfig, issue) -> str:
-    """Classify the Issue's next action as active / waiting / done.
+def _action_kind(action: str) -> str:
+    """Classify a next action as active / waiting / done.
 
     active: an active development step such as implement/ai_review/create_pr.
     Only one Issue is active at a time, to avoid ping-ponging between Issues.
     """
-    action = st.parse_state(issue.body, issue.number, cfg.branch_prefix).next_action
     if action == "done":
         return "done"
     if action in _WAITING_ACTIONS:
         return "waiting"
     return "active"
+
+
+def _phase_kind(cfg: RepoConfig, issue) -> str:
+    """Classify the Issue's next action as active / waiting / done."""
+    return _action_kind(st.parse_state(issue.body, issue.number, cfg.branch_prefix).next_action)
+
+
+def _recover_status_label(cfg: RepoConfig, gh: GitHub, issue, rlog, dry_run: bool) -> bool:
+    """Put an Issue that lost its status label back to idle. False = leave it alone.
+
+    The status label is what marks an Issue as ghswarm-managed, so an Issue that lost
+    one -- e.g. a transient GitHub API error hit between removing busy and adding idle --
+    would otherwise be skipped forever with no notification. A ghswarm state block in
+    the body proves the Issue was under ghswarm management, so restore idle instead of
+    stranding it.
+    """
+    if not st.has_state(issue.body):
+        return False
+    if dry_run:
+        rlog.warning(
+            "Issue #%s: no status label (would restore %s; skipped in dry-run)",
+            issue.number,
+            cfg.labels.idle,
+        )
+        return False
+    rlog.warning(
+        "Issue #%s: no status label but a ghswarm state block is present. Restoring %s",
+        issue.number,
+        cfg.labels.idle,
+    )
+    gh.add_label(issue.number, cfg.labels.idle)
+    issue.labels.append(cfg.labels.idle)
+    return True
 
 
 def _process_cycle(
@@ -350,9 +391,15 @@ def _process_cycle(
     activity_path = resolve_activity_dir(cfg.activity_dir)
     try:
         active_taken = False
-        for issue in _target_issues(cfg, orch.gh):
-            kind = _phase_kind(cfg, issue)
+        dry_run = bool(getattr(orch, "dry_run", False))
+        for issue in _filtered_issues(cfg, orch.gh):
+            state = st.parse_state(issue.body, issue.number, cfg.branch_prefix)
+            kind = _action_kind(state.next_action)
             if kind == "done":
+                continue
+            if not _is_managed(cfg, issue) and not _recover_status_label(
+                cfg, orch.gh, issue, rlog, dry_run
+            ):
                 continue
             # Once the first active Issue is advanced, defer the rest. waiting (CI/reply) is checked every time.
             if kind == "active" and active_taken:
@@ -360,12 +407,11 @@ def _process_cycle(
                     "Issue #%s: deferred because another Issue is in development", issue.number
                 )
                 continue
-            next_action = st.parse_state(issue.body, issue.number, cfg.branch_prefix).next_action
             activity.write_activity(
                 activity_path,
                 cfg.repo,
                 issue.number,
-                next_action,
+                state.next_action,
                 daemon_pid if daemon_pid is not None else os.getppid(),
             )
             result = orch.process(issue.number)

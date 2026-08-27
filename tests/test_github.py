@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import subprocess
 
+import pytest
+
 import ghswarm.github as github
-from ghswarm.github import GitHub, PRStatus, _run_gh
+from ghswarm.github import GitHub, GitHubError, PRStatus, _run_gh, is_transient_error
 
 
 def _payload(**overrides) -> dict:
@@ -358,3 +360,93 @@ def test_run_gh_inherits_env_when_empty_dict(monkeypatch):
 
     assert _run_gh(["version"], env={}) == "ok"
     assert captured["env"] is None
+
+
+# -- transient retry --------------------------------------------------------
+
+# The reset seen in the field: gh exits 1 with only this on stderr, and without a retry
+# a single hiccup aborted the whole cycle mid label transition.
+_RESET = (
+    'Post "https://api.github.com/graphql": read tcp '
+    "172.16.0.2:65392->20.27.177.116:443: read: connection reset by peer"
+)
+
+
+def _responses(monkeypatch, results, sleeps=None):
+    """Make subprocess.run return the given (returncode, stderr) pairs in order."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        code, stderr = results[min(len(calls), len(results) - 1)]
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, code, stdout="ok", stderr=stderr)
+
+    monkeypatch.setattr(github.subprocess, "run", fake_run)
+    recorded = sleeps if sleeps is not None else []
+    monkeypatch.setattr(github, "_sleep", recorded.append)
+    return calls
+
+
+def test_is_transient_error_matches_network_and_5xx():
+    assert is_transient_error(_RESET)
+    assert is_transient_error("dial tcp: i/o timeout")
+    assert is_transient_error("net/http: TLS handshake timeout")
+    assert is_transient_error("HTTP 502: Bad gateway")
+    assert is_transient_error("Service Unavailable")
+
+
+def test_is_transient_error_ignores_ordinary_failures():
+    assert not is_transient_error("")
+    assert not is_transient_error("could not add label: 'status: idle' not found")
+    assert not is_transient_error("GraphQL: Resource not accessible by integration")
+    assert not is_transient_error("API rate limit exceeded")
+
+
+def test_run_gh_retries_transient_error_then_succeeds(monkeypatch):
+    calls = _responses(monkeypatch, [(1, _RESET), (0, "")])
+    assert _run_gh(["issue", "edit", "827", "--add-label", "status: idle"]) == "ok"
+    assert len(calls) == 2
+
+
+def test_run_gh_gives_up_after_the_retry_budget_with_backoff(monkeypatch):
+    sleeps: list[float] = []
+    calls = _responses(monkeypatch, [(1, _RESET)], sleeps)
+    with pytest.raises(GitHubError):
+        _run_gh(["issue", "edit", "827"])
+    assert len(calls) == 3  # first attempt + 2 retries
+    assert sleeps == [2.0, 4.0]  # exponential backoff
+
+
+def test_run_gh_does_not_retry_ordinary_failures(monkeypatch):
+    calls = _responses(monkeypatch, [(1, "GraphQL: Could not resolve to an Issue")])
+    with pytest.raises(GitHubError):
+        _run_gh(["issue", "view", "1"])
+    assert len(calls) == 1
+
+
+def test_run_gh_honours_retries_zero_for_non_idempotent_commands(monkeypatch):
+    # Retrying a comment that actually reached GitHub would post it twice.
+    calls = _responses(monkeypatch, [(1, _RESET)])
+    with pytest.raises(GitHubError):
+        _run_gh(["issue", "comment", "1"], retries=0)
+    assert len(calls) == 1
+
+
+def test_comment_and_merge_do_not_retry(monkeypatch):
+    calls = _responses(monkeypatch, [(1, _RESET)])
+    gh = GitHub("owner/repo")
+    with pytest.raises(GitHubError):
+        gh.comment(1, "body")
+    with pytest.raises(GitHubError):
+        gh.pr_comment(1, "body")
+    with pytest.raises(GitHubError):
+        gh.merge_pr(1)
+    assert len(calls) == 3
+
+
+def test_add_label_retries_transient_error(monkeypatch):
+    calls = _responses(monkeypatch, [(1, _RESET), (0, "")])
+    gh = GitHub("owner/repo")
+    gh._known_labels = {"status: idle"}
+    gh.add_label(827, "status: idle")
+    assert len(calls) == 2

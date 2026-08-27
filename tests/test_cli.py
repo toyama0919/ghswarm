@@ -42,6 +42,7 @@ _REAL_DIR = str(Path(__file__).resolve().parent)
 
 class FakeGitHub:
     def __init__(self, issues=None):
+        self.added_labels: list[tuple[int, str]] = []
         self.last_kwargs: dict | None = None
         self._issues = issues or []
         self._issue_by_number: dict[int, Issue] = {}
@@ -57,6 +58,9 @@ class FakeGitHub:
             if issue.number == number:
                 return issue
         raise KeyError(number)
+
+    def add_label(self, number: int, label: str) -> None:
+        self.added_labels.append((number, label))
 
 
 class FakeOrch:
@@ -200,6 +204,42 @@ def test_phase_kind_classification():
     assert _phase_kind(cfg, _issue(1, "wait_ci")) == "waiting"
     assert _phase_kind(cfg, _issue(1, "wait_for_clarification")) == "waiting"
     assert _phase_kind(cfg, _issue(1, "done")) == "done"
+
+
+def test_cycle_restores_the_status_label_of_an_orphaned_issue():
+    # A transient GitHub API error between removing busy and adding idle leaves the Issue
+    # with no status label, which makes it look unmanaged and stalls it forever. As long
+    # as the body still has a ghswarm state block, put it back to idle and keep going.
+    gh = FakeGitHub([_issue(1, "implement", labels=["pm-agent"])])
+    orch = FakeOrch(gh)
+
+    _process_cycle(_cfg().repositories["test"], orch)
+
+    assert gh.added_labels == [(1, "status: idle")]
+    assert orch.processed == [1]
+
+
+def test_cycle_ignores_issues_that_ghswarm_never_touched():
+    # No status label and no state block: not a ghswarm Issue, so never label it.
+    unmanaged = Issue(number=1, title="issue 1", body="plain body", labels=["pm-agent"])
+    gh = FakeGitHub([unmanaged])
+    orch = FakeOrch(gh)
+
+    _process_cycle(_cfg().repositories["test"], orch)
+
+    assert gh.added_labels == []
+    assert orch.processed == []
+
+
+def test_cycle_does_not_restore_the_status_label_in_dry_run():
+    gh = FakeGitHub([_issue(1, "implement", labels=["pm-agent"])])
+    orch = FakeOrch(gh)
+    orch.dry_run = True
+
+    _process_cycle(_cfg().repositories["test"], orch)
+
+    assert gh.added_labels == []
+    assert orch.processed == []
 
 
 def test_cycle_processes_only_one_active_issue():

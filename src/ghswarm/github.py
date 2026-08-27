@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -19,6 +20,35 @@ log = get_logger("ghswarm.github")
 
 _GHA_RUN_URL_RE = re.compile(r"/actions/runs/(\d+)")
 _FAILED_GHA_LOG_MAX = 20000
+
+# Transient gh failures worth retrying: network hiccups between gh and api.github.com
+# and 5xx responses from GitHub. gh just exits non-zero for these, so without a retry a
+# single hiccup aborts the whole cycle -- and if it lands between removing and adding a
+# status label, the Issue is left with no status label and is skipped forever.
+_TRANSIENT_RE = re.compile(
+    r"connection reset by peer"
+    r"|connection refused"
+    r"|broken pipe"
+    r"|network is unreachable"
+    r"|no such host"
+    r"|temporary failure in name resolution"
+    r"|i/o timeout"
+    r"|tls handshake timeout"
+    r"|context deadline exceeded"
+    r"|unexpected eof"
+    r"|bad gateway"
+    r"|service unavailable"
+    r"|gateway time-?out"
+    r"|internal server error"
+    r"|http 50\d",
+    re.IGNORECASE,
+)
+# Number of extra attempts after the first one, and the base for exponential backoff.
+_RETRIES = 2
+_RETRY_BASE_SLEEP = 2.0
+# For non-idempotent commands (posting comments, creating a PR, merging): a retry after a
+# request that actually reached GitHub would duplicate the side effect, so never retry.
+_NO_RETRY = 0
 
 
 class GitHubError(Exception):
@@ -126,31 +156,56 @@ def _subprocess_env(env: dict[str, str] | None) -> dict[str, str] | None:
     return {**os.environ, **env}
 
 
+def _sleep(seconds: float) -> None:
+    """Indirection so tests can replace the backoff sleep."""
+    time.sleep(seconds)
+
+
+def is_transient_error(message: str) -> bool:
+    """Whether the gh error output looks like a temporary network/server failure."""
+    return bool(_TRANSIENT_RE.search(message or ""))
+
+
 def _run_gh(
     args: list[str],
     cwd: str | None = None,
     input_text: str | None = None,
     env: dict[str, str] | None = None,
+    retries: int = _RETRIES,
 ) -> str:
     cmd = ["gh", *args]
     log.debug("gh %s", " ".join(args))
-    try:
-        res = subprocess.run(
-            cmd,
-            cwd=cwd,
-            input=input_text,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_subprocess_env(env),
-        )
-    except FileNotFoundError as e:  # gh not installed
-        raise GitHubError("`gh` command not found. Please install the GitHub CLI.") from e
-    if res.returncode != 0:
-        raise GitHubError(
-            f"gh {' '.join(args)} failed (exit {res.returncode}):\n{res.stderr.strip()}"
-        )
-    return res.stdout
+    attempt = 0
+    while True:
+        try:
+            res = subprocess.run(
+                cmd,
+                cwd=cwd,
+                input=input_text,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=_subprocess_env(env),
+            )
+        except FileNotFoundError as e:  # gh not installed
+            raise GitHubError("`gh` command not found. Please install the GitHub CLI.") from e
+        if res.returncode == 0:
+            return res.stdout
+        stderr = res.stderr.strip()
+        if attempt < retries and is_transient_error(stderr):
+            delay = _RETRY_BASE_SLEEP * (2**attempt)
+            attempt += 1
+            log.warning(
+                "gh %s hit a transient error (retry %s/%s in %.0fs): %s",
+                " ".join(args),
+                attempt,
+                retries,
+                delay,
+                stderr,
+            )
+            _sleep(delay)
+            continue
+        raise GitHubError(f"gh {' '.join(args)} failed (exit {res.returncode}):\n{stderr}")
 
 
 def _run_gh_ignore_exit(
@@ -311,6 +366,7 @@ class GitHub:
             ["issue", "comment", str(number), "--repo", self.repo, "--body-file", "-"],
             input_text=body,
             env=self.env,
+            retries=_NO_RETRY,
         )
 
     def close_issue(self, number: int) -> None:
@@ -358,6 +414,7 @@ class GitHub:
             ],
             input_text=body,
             env=self.env,
+            retries=_NO_RETRY,
         )
         return out.strip()
 
@@ -477,6 +534,7 @@ class GitHub:
             ["pr", "comment", str(number), "--repo", self.repo, "--body-file", "-"],
             input_text=body,
             env=self.env,
+            retries=_NO_RETRY,
         )
 
     def pr_review_items(self, number: int) -> list["ReviewItem"]:
@@ -635,4 +693,4 @@ class GitHub:
         args = ["pr", "merge", str(number), "--repo", self.repo, f"--{method}"]
         if delete_branch:
             args.append("--delete-branch")
-        _run_gh(args, env=self.env)
+        _run_gh(args, env=self.env, retries=_NO_RETRY)
