@@ -185,10 +185,12 @@ class FakeGitHub:
     def __init__(self, items: list[ReviewItem], status: PRStatus):
         self.items = items
         self.status = status
+        self.human_approval = False
         self.issue_comments: list[str] = []
         self.pr_comments: list[str] = []
         self.bodies: list[str] = []
         self.resolved: list[tuple[int, str]] = []
+        self.issue_body = "Body"
 
     def pr_review_items(self, number: int) -> list[ReviewItem]:
         return self.items
@@ -200,11 +202,15 @@ class FakeGitHub:
     def pr_status(self, number: int) -> PRStatus:
         return self.status
 
+    def has_human_approval(self, number: int) -> bool:
+        return self.human_approval
+
     def get_issue(self, number: int) -> Issue:
-        return Issue(number=number, title="Test", body="Body", labels=[])
+        return Issue(number=number, title="Test", body=self.issue_body, labels=[])
 
     def set_body(self, number: int, body: str) -> None:
         self.bodies.append(body)
+        self.issue_body = body
 
     def comment(self, number: int, body: str) -> None:
         self.issue_comments.append(body)
@@ -241,12 +247,15 @@ class FakeWorktreeGit:
         self.pushed.append(branch)
 
 
-def _orch(items, status=None):
+def _orch(items, status=None, *, require_approval="any"):
     status = status or PRStatus(
         number=9, state="OPEN", mergeable="MERGEABLE", review_decision="", checks="success"
     )
     orch = Orchestrator.__new__(Orchestrator)
-    orch.cfg = RepoConfig(agents={"review": AgentConfig(name="review", commands=["noop"])})
+    orch.cfg = RepoConfig(
+        agents={"review": AgentConfig(name="review", commands=["noop"])},
+        require_approval=require_approval,
+    )
     orch.cwd = "/tmp"
     orch.gh = FakeGitHub(items, status)
     orch.git = FakeGit()
@@ -462,3 +471,40 @@ def test_wait_ci_skips_review_when_disabled(monkeypatch):
     # require_approval=True by default + review_decision="" means no merge, so skip
     result = orch._wait_ci(Issue(number=7, title="Test", body="Body"), _state())
     assert result.action == "skipped"
+
+
+def test_wait_ci_human_mode_holds_merge_until_human_approval():
+    status = PRStatus(
+        number=9,
+        state="OPEN",
+        mergeable="MERGEABLE",
+        review_decision="APPROVED",
+        checks="success",
+    )
+    orch = _orch([], status, require_approval="human")
+    result = orch._wait_ci(Issue(number=7, title="Test", body="Body"), _state())
+
+    assert result.action == "skipped"
+    assert "waiting for human approval" in result.detail
+    assert len(orch.gh.issue_comments) == 1
+    assert "human approval" in orch.gh.issue_comments[0]
+
+
+def test_wait_ci_human_waiting_comment_is_not_duplicated_across_restart():
+    status = PRStatus(
+        number=9,
+        state="OPEN",
+        mergeable="MERGEABLE",
+        review_decision="APPROVED",
+        checks="success",
+    )
+    orch = _orch([], status, require_approval="human")
+    issue = Issue(number=7, title="Test", body="Body")
+    state = _state()
+
+    orch._wait_ci(issue, state)
+    restored = st.parse_state(orch.gh.issue_body, 7)
+    orch._wait_ci(issue, restored)
+
+    assert len(orch.gh.issue_comments) == 1
+    assert restored.human_approval_wait_pr_number == 9

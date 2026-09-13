@@ -55,6 +55,8 @@ class IssueState:
     pending_questions: list[str] = field(default_factory=list)
     pr_url: str = ""
     pr_number: int = 0
+    # PR number for which the one-time human-approval waiting comment was posted.
+    human_approval_wait_pr_number: int = 0
     merge_commit_sha: str = ""  # sha of the merge commit whose CI is checked post-merge
     merged_at: str = ""  # time the merge was performed (ISO8601 UTC)
     # High-water mark of addressed PR review comments (ISO8601 UTC). Only reviews/
