@@ -568,10 +568,15 @@ class Orchestrator:
         state.next_action = "wait_ci"
         state.pr_url = pr_url
         state.pr_number = pr_number or 0
+        state.human_approval_wait_pr_number = 0
         self._persist(issue, state)
         # Release the lock but do not mark completed (still waiting on CI/approval).
         self._release_idle(issue, state)
-        gate = "CI success + review approval" if self.cfg.require_approval else "CI success"
+        gate = {
+            "none": "CI success",
+            "any": "CI success + review approval",
+            "human": "CI success + human review approval",
+        }[self.cfg.require_approval]
         self.gh.comment(
             issue.number,
             f"🚀 {verb}: {pr_url}\n"
@@ -621,13 +626,25 @@ class Orchestrator:
             if pending:
                 return self._address_review(issue, state, pending)
 
-        if not status.ready_to_merge(self.cfg.require_approval):
-            detail = (
-                f"checks={status.checks} review={status.review_decision or '-'} "
-                f"mergeable={status.mergeable}"
-            )
+        mode = self.cfg.require_approval
+        detail = (
+            f"checks={status.checks} review={status.review_decision or '-'} "
+            f"mergeable={status.mergeable}"
+        )
+        if not status.ready_to_merge(mode):
             log.info("Issue #%s: merge conditions not met (%s)", issue.number, detail)
             return StepResult(issue.number, "skipped", f"waiting on CI/approval ({detail})")
+
+        if mode == "human" and not self.gh.has_human_approval(state.pr_number):
+            if state.human_approval_wait_pr_number != state.pr_number:
+                self.gh.comment(
+                    issue.number,
+                    f"⏳ Waiting for a human approval on PR #{state.pr_number}.",
+                )
+                state.human_approval_wait_pr_number = state.pr_number
+                self._persist(issue, state)
+            log.info("Issue #%s: waiting for human approval (%s)", issue.number, detail)
+            return StepResult(issue.number, "skipped", f"waiting for human approval ({detail})")
 
         # Conditions met -> squash merge.
         self.gh.merge_pr(

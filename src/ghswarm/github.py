@@ -119,14 +119,14 @@ class PRStatus:
                     any_pending = True
         return "pending" if any_pending else "success"
 
-    def ready_to_merge(self, require_approval: bool) -> bool:
+    def ready_to_merge(self, mode: str) -> bool:
         if self.state != "OPEN":
             return False
         if self.mergeable == "CONFLICTING":
             return False
         if self.checks not in ("success", "none"):
             return False
-        if require_approval and self.review_decision != "APPROVED":
+        if mode != "none" and self.review_decision != "APPROVED":
             return False
         return True
 
@@ -467,6 +467,30 @@ class GitHub:
             env=self.env,
         )
         return PRStatus.from_json(json.loads(out))
+
+    def has_human_approval(self, number: int) -> bool:
+        """Return whether a non-bot user's latest non-commented review is APPROVED.
+
+        The reviews endpoint is intentionally read once in its returned order. GitHub's
+        overall review decision remains the first-stage gate; this method only narrows
+        an already-approved PR to approvals from human accounts.
+        """
+        reviews = self._api_json(f"repos/{self.repo}/pulls/{number}/reviews?per_page=100")
+        latest: dict[str, tuple[str, dict[str, Any]]] = {}
+        for review in reviews if isinstance(reviews, list) else []:
+            user = review.get("user") or {}
+            login = user.get("login") or ""
+            state = (review.get("state") or "").upper()
+            if state == "COMMENTED":
+                continue
+            latest[login] = (state, user)
+
+        return any(
+            state == "APPROVED"
+            and user.get("type") != "Bot"
+            and not login.lower().endswith("[bot]")
+            for login, (state, user) in latest.items()
+        )
 
     def failed_gha_ci_logs(self, number: int) -> str | None:
         """Return logs from failed GHA workflow runs.

@@ -82,6 +82,95 @@ def test_rollup_status_context_lowercase_state():
     assert PRStatus._rollup(rollup) == "success"
 
 
+# -- PRStatus.ready_to_merge / human approvals ----------------------------
+
+
+@pytest.mark.parametrize(
+    ("mode", "review_decision", "expected"),
+    [
+        ("none", "", True),
+        ("none", "CHANGES_REQUESTED", True),
+        ("any", "APPROVED", True),
+        ("any", "", False),
+        ("human", "APPROVED", True),
+        ("human", "", False),
+    ],
+)
+def test_ready_to_merge_uses_approval_mode(mode, review_decision, expected):
+    status = PRStatus(
+        number=1,
+        state="OPEN",
+        mergeable="MERGEABLE",
+        review_decision=review_decision,
+        checks="success",
+    )
+    assert status.ready_to_merge(mode) is expected
+
+
+def test_ready_to_merge_rejects_non_open_conflicting_or_pending_statuses():
+    base = dict(number=1, review_decision="APPROVED")
+    assert not PRStatus(
+        state="CLOSED", mergeable="MERGEABLE", checks="success", **base
+    ).ready_to_merge("none")
+    assert not PRStatus(
+        state="OPEN", mergeable="CONFLICTING", checks="success", **base
+    ).ready_to_merge("none")
+    assert not PRStatus(
+        state="OPEN", mergeable="MERGEABLE", checks="pending", **base
+    ).ready_to_merge("none")
+
+
+@pytest.mark.parametrize(
+    "reviews",
+    [
+        [{"user": {"login": "coderabbit[bot]", "type": "Bot"}, "state": "APPROVED"}],
+        [{"user": {"login": "ci[bot]", "type": "User"}, "state": "APPROVED"}],
+    ],
+)
+def test_has_human_approval_rejects_bots(monkeypatch, reviews):
+    monkeypatch.setattr(github.GitHub, "_api_json", lambda self, path: reviews)
+    assert not GitHub("owner/repo").has_human_approval(7)
+
+
+def test_has_human_approval_accepts_human_approval(monkeypatch):
+    reviews = [{"user": {"login": "alice", "type": "User"}, "state": "APPROVED"}]
+    monkeypatch.setattr(github.GitHub, "_api_json", lambda self, path: reviews)
+    assert GitHub("owner/repo").has_human_approval(7)
+
+
+def test_has_human_approval_keeps_latest_non_commented_review_per_user(monkeypatch):
+    reviews = [
+        {"user": {"login": "alice", "type": "User"}, "state": "APPROVED"},
+        {"user": {"login": "alice", "type": "User"}, "state": "COMMENTED"},
+        {"user": {"login": "bob", "type": "User"}, "state": "COMMENTED"},
+        {"user": {"login": "bob", "type": "User"}, "state": "APPROVED"},
+    ]
+    monkeypatch.setattr(github.GitHub, "_api_json", lambda self, path: reviews)
+    assert GitHub("owner/repo").has_human_approval(7)
+
+
+@pytest.mark.parametrize("state", ["DISMISSED", "PENDING"])
+def test_has_human_approval_dismissed_or_pending_latest_does_not_count(monkeypatch, state):
+    reviews = [
+        {"user": {"login": "alice", "type": "User"}, "state": "APPROVED"},
+        {"user": {"login": "alice", "type": "User"}, "state": state},
+    ]
+    monkeypatch.setattr(github.GitHub, "_api_json", lambda self, path: reviews)
+    assert not GitHub("owner/repo").has_human_approval(7)
+
+
+def test_has_human_approval_uses_single_non_paginated_reviews_request(monkeypatch):
+    calls: list[str] = []
+
+    def fake_api(self, path):
+        calls.append(path)
+        return []
+
+    monkeypatch.setattr(github.GitHub, "_api_json", fake_api)
+    assert not GitHub("owner/repo").has_human_approval(7)
+    assert calls == ["repos/owner/repo/pulls/7/reviews?per_page=100"]
+
+
 # -- commit_checks / merge_commit_sha / close_issue ------------------------
 
 
