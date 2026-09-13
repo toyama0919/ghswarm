@@ -15,13 +15,16 @@ import posixpath
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
 
 class ConfigError(Exception):
     pass
+
+
+RequireApproval = Literal["none", "any", "human"]
 
 
 @dataclass
@@ -142,7 +145,7 @@ class RepoConfig:
     # branch the PR merges into. Work branches are also cut from here. Auto-detected via gh if empty.
     base_branch: str = ""
     merge_method: str = "squash"  # squash / merge / rebase
-    require_approval: bool = True  # require PR review approval for auto-merge
+    require_approval: RequireApproval = "any"  # none / any / human PR approval for auto-merge
     # whether to automatically pick up review comments on the PR (both humans and
     # review bots) and have the review agent address them. Ensures review feedback
     # is not dropped, not just that CI passes.
@@ -673,6 +676,30 @@ def _reject_legacy_spec_dir(raw: dict[str, Any], source: Path, location: str) ->
         raise ConfigError(f"{source}: '{location}' is no longer supported. {_SPEC_DIR_MIGRATION}")
 
 
+_REQUIRE_APPROVAL_EXAMPLE = """Example:
+require_approval: true   # false, true, or human
+"""
+
+
+def _load_require_approval(raw: dict[str, Any], source: Path) -> RequireApproval:
+    """Normalize the three accepted require_approval values."""
+    value = raw.get("require_approval", True)
+    if isinstance(value, bool):
+        return "any" if value else "none"
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized == "human":
+            return "human"
+        if normalized == "true":
+            return "any"
+        if normalized == "false":
+            return "none"
+    raise ConfigError(
+        f"{source}: 'require_approval' must be false, true, or 'human' "
+        f"(got {value!r}).\n{_REQUIRE_APPROVAL_EXAMPLE}"
+    )
+
+
 def _build_repo_config_from_raw(
     alias: str, repo: str, path: str, raw: dict[str, Any], source: Path
 ) -> RepoConfig:
@@ -701,7 +728,7 @@ def _build_repo_config_from_raw(
         branch_prefix=raw.get("branch_prefix", "issue-"),
         base_branch=raw.get("base_branch", ""),
         merge_method=raw.get("merge_method", "squash"),
-        require_approval=bool(raw.get("require_approval", True)),
+        require_approval=_load_require_approval(raw, source),
         address_pr_reviews=bool(raw.get("address_pr_reviews", True)),
         resolve_review_threads=bool(raw.get("resolve_review_threads", True)),
         delete_branch_on_merge=bool(raw.get("delete_branch_on_merge", True)),

@@ -84,6 +84,32 @@ def test_post_merge_ci_defaults(tmp_path):
     assert cfg.post_merge_ci_grace == 180
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("false", "none"),
+        ("true", "any"),
+        ('"false"', "none"),
+        ('"true"', "any"),
+        ('"human"', "human"),
+        ('"  HuMaN  "', "human"),
+    ],
+)
+def test_require_approval_normalizes_supported_values(tmp_path, value, expected):
+    app = load_config(_write_config(tmp_path, repo_extra=f"require_approval: {value}\n"))
+    assert _repo(app).require_approval == expected
+
+
+def test_require_approval_defaults_to_any(tmp_path):
+    assert _repo(load_config(_write_config(tmp_path))).require_approval == "any"
+
+
+@pytest.mark.parametrize("value", ["maybe", "", "null", "1", "[]"])
+def test_require_approval_invalid_value_raises_config_error(tmp_path, value):
+    with pytest.raises(ConfigError, match=r"require_approval.*(false|true|human)"):
+        load_config(_write_config(tmp_path, repo_extra=f"require_approval: {value}\n"))
+
+
 # -- worktree_dir -----------------------------------------------------------
 
 
