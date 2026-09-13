@@ -57,8 +57,8 @@ flowchart TB
   label; should one lose it anyway, the next cycle restores `status: idle` as long as the body still holds a state block.
 - **Clarification** — if the spec is unclear during implementation, the agent writes `.agent_question.md` and exits. ghswarm comments on the Issue,
   sets `status: blocked`, and once an answer is posted it resumes with `--resume`.
-- **CI/approve gate → auto-merge → post-merge CI gate** — after the PR is created, it polls as `wait_ci`.
-  Once all CI succeeds and the PR review is approved (`require_approval`), it squash-merges. On CI failure it blocks.
+- **CI/approval gate → auto-merge → post-merge CI gate** — after the PR is created, it polls as `wait_ci`.
+  Once the configured CI and approval gates are satisfied (`require_approval`), it squash-merges. On CI failure it blocks.
   When `mergeable=CONFLICTING`, it merges `origin/<base_branch>` in the worktree to auto-resolve, then
   re-runs CI after pushing (can be disabled with `auto_resolve_conflicts`).
   After merging it does not close the Issue but proceeds to `verify_merge`, closing the Issue only when the CI of the merge
@@ -205,7 +205,7 @@ in `defaults:` as well as in each repo entry.
 | `poll_interval` | `60` | Polling interval for `loop` (seconds) |
 | `question_file` | `".agent_question.md"` | File the agent writes clarifications to |
 | `merge_method` | `"squash"` | `squash` / `merge` / `rebase` |
-| `require_approval` | `true` | Whether auto-merge requires a PR review approval |
+| `require_approval` | `true` | Approval gate: `false` (CI only), `true` (any approval), or `human` (at least one approval from a non-bot account). Boolean values and the strings `"false"` / `"true"` are accepted; strings are normalized case-insensitively with surrounding whitespace removed. In `human` mode, bot users (`user.type == "Bot"` or logins ending in `[bot]`) are excluded; `COMMENTED` does not replace a review state, while `DISMISSED` / `PENDING` do not count. Review commit SHAs and timestamps are not checked for stale approvals. |
 | `address_pr_reviews` | `true` | Whether to have the review agent address PR review comments (human / bot) |
 | `resolve_review_threads` | `true` | After addressing review feedback, mark the corresponding PR review threads as resolved |
 | `delete_branch_on_merge` | `true` | Whether to delete the work branch after merge |
@@ -372,6 +372,8 @@ Daemon logs accumulate one file per start date. Manage size at your discretion w
 
 - Within the same repository, Issues are processed serially (one active at a time). Multiple repositories can run in parallel via `loop`.
 - Each coding CLI's headless auto-approval flag (`--dangerously-skip-permissions`, etc.) is set at your own risk.
-- With `require_approval: true`, a PR is not merged until it gets an approval. In setups with no approver,
-  set it to `false`, or gate on an approve from another agent/human.
+- `require_approval: false` merges after CI succeeds without an approval; `true` requires GitHub's overall PR
+  review decision to be `APPROVED`; `human` additionally requires a latest non-commented `APPROVED` review from
+  at least one non-bot account. The default is `true`. In `human` mode, `DISMISSED` and `PENDING` reviews do not
+  count, and ghswarm does not attempt home-grown stale-approval detection based on commit SHAs or timestamps.
 - ghswarm creates branch `issue-N` and the implementation PR during Line 2. Line 1 (ghswarm-spec) does not cut a branch or open a PR.

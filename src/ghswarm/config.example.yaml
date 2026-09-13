@@ -15,6 +15,7 @@ daemon_pid: ~/.ghswarm/ghswarm.pid   # PID file for `loop -d`
 defaults:                    # Shared fallback for all repos (optional)
   poll_interval: 60
   merge_method: squash
+  # false = CI only; true = any approval; human = approval from a non-bot account
   require_approval: true
   agents:
     implement:

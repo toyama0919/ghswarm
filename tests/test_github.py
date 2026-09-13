@@ -87,8 +87,14 @@ def test_rollup_status_context_lowercase_state():
 
 @pytest.mark.parametrize(
     ("mode", "review_decision", "expected"),
-    [("none", "", True), ("none", "CHANGES_REQUESTED", True), ("any", "APPROVED", True),
-     ("any", "", False), ("human", "APPROVED", True), ("human", "", False)],
+    [
+        ("none", "", True),
+        ("none", "CHANGES_REQUESTED", True),
+        ("any", "APPROVED", True),
+        ("any", "", False),
+        ("human", "APPROVED", True),
+        ("human", "", False),
+    ],
 )
 def test_ready_to_merge_uses_approval_mode(mode, review_decision, expected):
     status = PRStatus(
