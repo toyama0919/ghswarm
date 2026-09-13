@@ -468,7 +468,7 @@ def test_wait_ci_skips_review_when_disabled(monkeypatch):
     orch._address_review = lambda *a, **k: (_ for _ in ()).throw(
         AssertionError("must not be called")
     )
-    # require_approval=True by default + review_decision="" means no merge, so skip
+    # require_approval="any" by default + review_decision="" means no merge, so skip
     result = orch._wait_ci(Issue(number=7, title="Test", body="Body"), _state())
     assert result.action == "skipped"
 

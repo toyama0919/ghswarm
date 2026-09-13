@@ -145,7 +145,7 @@ class RepoConfig:
     # branch the PR merges into. Work branches are also cut from here. Auto-detected via gh if empty.
     base_branch: str = ""
     merge_method: str = "squash"  # squash / merge / rebase
-    require_approval: RequireApproval = "any"  # none / any / human PR approval for auto-merge
+    require_approval: RequireApproval = "any"  # normalized mode: none / any / human
     # whether to automatically pick up review comments on the PR (both humans and
     # review bots) and have the review agent address them. Ensures review feedback
     # is not dropped, not just that CI passes.
@@ -680,20 +680,22 @@ _REQUIRE_APPROVAL_EXAMPLE = """Example:
 require_approval: true   # false, true, or human
 """
 
+_REQUIRE_APPROVAL_VALUES: dict[str, RequireApproval] = {
+    "false": "none",
+    "true": "any",
+    "human": "human",
+}
+
 
 def _load_require_approval(raw: dict[str, Any], source: Path) -> RequireApproval:
     """Normalize the three accepted require_approval values."""
     value = raw.get("require_approval", True)
     if isinstance(value, bool):
-        return "any" if value else "none"
+        value = str(value)
     if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized == "human":
-            return "human"
-        if normalized == "true":
-            return "any"
-        if normalized == "false":
-            return "none"
+        mode = _REQUIRE_APPROVAL_VALUES.get(value.strip().lower())
+        if mode is not None:
+            return mode
     raise ConfigError(
         f"{source}: 'require_approval' must be false, true, or 'human' "
         f"(got {value!r}).\n{_REQUIRE_APPROVAL_EXAMPLE}"

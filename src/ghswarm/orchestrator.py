@@ -627,11 +627,11 @@ class Orchestrator:
                 return self._address_review(issue, state, pending)
 
         mode = self.cfg.require_approval
+        detail = (
+            f"checks={status.checks} review={status.review_decision or '-'} "
+            f"mergeable={status.mergeable}"
+        )
         if not status.ready_to_merge(mode):
-            detail = (
-                f"checks={status.checks} review={status.review_decision or '-'} "
-                f"mergeable={status.mergeable}"
-            )
             log.info("Issue #%s: merge conditions not met (%s)", issue.number, detail)
             return StepResult(issue.number, "skipped", f"waiting on CI/approval ({detail})")
 
@@ -643,10 +643,6 @@ class Orchestrator:
                 )
                 state.human_approval_wait_pr_number = state.pr_number
                 self._persist(issue, state)
-            detail = (
-                f"checks={status.checks} review={status.review_decision or '-'} "
-                f"mergeable={status.mergeable}"
-            )
             log.info("Issue #%s: waiting for human approval (%s)", issue.number, detail)
             return StepResult(issue.number, "skipped", f"waiting for human approval ({detail})")
 
