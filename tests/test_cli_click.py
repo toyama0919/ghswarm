@@ -40,11 +40,9 @@ def test_run_help_documents_step_completion_repo_and_cwd():
 
 
 def test_loop_daemon_and_once_is_processing_error(monkeypatch):
-    monkeypatch.setattr(cli, "_load", lambda _config_path: cli.AppConfig())
+    monkeypatch.setattr(cli, "_load", lambda _config_path: cli.AppConfig(repositories={}))
 
-    result = CliRunner().invoke(cli.app, ["loop", "--daemon", "--once"])
-
-    assert result.exit_code == 1
+    assert cli.main(["loop", "--daemon", "--once"]) == 1
 
 
 def test_skills_install_global_and_project_is_usage_error():
