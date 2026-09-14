@@ -216,9 +216,9 @@ def cmd_config(args) -> int:
     return 0
 
 
-def cmd_init(args) -> int:
-    dest = Path(args.output or DEFAULT_CONFIG_PATH)
-    if dest.exists() and not args.force:
+def init_config(output: str | None = None, *, force: bool = False) -> int:
+    dest = Path(output or DEFAULT_CONFIG_PATH)
+    if dest.exists() and not force:
         log.error("%s already exists (use --force to overwrite)", dest)
         return 1
     try:
@@ -233,16 +233,30 @@ def cmd_init(args) -> int:
     return 0
 
 
-def cmd_skills_install(args) -> int:
+@app.command("init")
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(dir_okay=False, path_type=str),
+    help=f"output path (default {DEFAULT_CONFIG_PATH})",
+)
+@click.option("--force", is_flag=True, help="overwrite an existing file")
+def init_command(output: str | None, force: bool) -> int:
+    return init_config(output, force=force)
+
+
+def install_skills(
+    *, project: bool = False, dir: str | None = None, force: bool = False
+) -> int:
     """Copy the bundled Claude Code skills into a .claude/skills directory.
 
     The skills are shipped as package data, so the installed version always matches
     the installed CLI. --global (default) targets ~/.claude/skills so they are
     available regardless of cwd; --project targets ./.claude/skills.
     """
-    if args.dir:
-        dest_root = Path(args.dir).expanduser()
-    elif args.project:
+    if dir:
+        dest_root = Path(dir).expanduser()
+    elif project:
         dest_root = Path.cwd() / ".claude" / "skills"
     else:
         dest_root = Path.home() / ".claude" / "skills"
@@ -258,7 +272,7 @@ def cmd_skills_install(args) -> int:
             dest_root.mkdir(parents=True, exist_ok=True)
             for skill_dir in skill_dirs:
                 dest = dest_root / skill_dir.name
-                if dest.exists() and not args.force:
+                if dest.exists() and not force:
                     skipped.append(skill_dir.name)
                     continue
                 if dest.exists():
@@ -276,6 +290,37 @@ def cmd_skills_install(args) -> int:
     if not installed and skipped:
         log.info("All skills already present. Re-run with --force to update them.")
     return 0
+
+
+@app.group()
+def skills() -> None:
+    """Manage the bundled Claude Code skills."""
+
+
+@skills.command("install")
+@click.option(
+    "--global",
+    "global_install",
+    is_flag=True,
+    help="install into ~/.claude/skills (default; available regardless of cwd)",
+)
+@click.option(
+    "--project",
+    is_flag=True,
+    help="install into ./.claude/skills of the current directory",
+)
+@click.option(
+    "--dir",
+    type=click.Path(file_okay=False, path_type=str),
+    help="install into an explicit directory instead",
+)
+@click.option("-f", "--force", is_flag=True, help="overwrite skills that already exist")
+def skills_install_command(
+    global_install: bool, project: bool, dir: str | None, force: bool
+) -> int:
+    if global_install and project:
+        raise click.UsageError("--global and --project cannot be used together")
+    return install_skills(project=project, dir=dir, force=force)
 
 
 def _filtered_issues(cfg: RepoConfig, gh: GitHub):
