@@ -585,7 +585,7 @@ def test_cmd_run_selects_repo_by_cwd_when_r_omitted(monkeypatch, tmp_path):
             )
         }
     )
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
     monkeypatch.setattr(cli, "Orchestrator", mock_orch)
     monkeypatch.setattr(cli, "_run_to_completion", lambda *a, **k: 0)
 
@@ -1237,7 +1237,7 @@ def test_cmd_status_skips_repo_with_missing_path(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_load", lambda _args: app)
     monkeypatch.setattr(cli, "_print_repo_status", fake_print_repo_status)
 
-    rc = cli.cmd_status(argparse.Namespace(repos=None, config=None))
+    rc = cli.show_status(None, None)
     assert rc == 0
     assert calls == ["a"]
 
@@ -1251,10 +1251,10 @@ def test_cmd_status_explicit_repo_not_filtered_by_missing_path(monkeypatch, tmp_
     app = _multi_app()
     app.repositories["b"].path = str(tmp_path / "does-not-exist")
 
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
     monkeypatch.setattr(cli, "_print_repo_status", fake_print_repo_status)
 
-    rc = cli.cmd_status(argparse.Namespace(repos=["b"], config=None))
+    rc = cli.show_status(None, ["b"])
     assert rc == 0
     assert calls == ["b"]
 
@@ -1365,9 +1365,9 @@ def test_cmd_config_json_output(monkeypatch, tmp_path, capsys):
     cfg.base_branch = "develop"
     cfg.branch_prefix = "feat-"
     app = AppConfig(repositories={"test": cfg})
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
 
-    rc = cli.cmd_config(argparse.Namespace(repos=None, config=None))
+    rc = cli.show_config(None, None)
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out == {
@@ -1398,10 +1398,10 @@ def test_cmd_config_detects_base_branch(monkeypatch, tmp_path, capsys):
     cfg.path = str(repo_path)
     cfg.base_branch = ""
     app = AppConfig(repositories={"test": cfg})
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
     monkeypatch.setattr(cli, "detect_default_branch", lambda path, env=None: "main")
 
-    rc = cli.cmd_config(argparse.Namespace(repos=None, config=None))
+    rc = cli.show_config(None, None)
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["base_branch"] == "main"
@@ -1415,14 +1415,14 @@ def test_cmd_config_base_branch_github_error_fallback(monkeypatch, tmp_path, cap
     cfg.path = str(repo_path)
     cfg.base_branch = ""
     app = AppConfig(repositories={"test": cfg})
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
 
     def boom(_path, env=None):
         raise GitHubError("network")
 
     monkeypatch.setattr(cli, "detect_default_branch", boom)
 
-    rc = cli.cmd_config(argparse.Namespace(repos=None, config=None))
+    rc = cli.show_config(None, None)
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["base_branch"] == ""
@@ -1433,23 +1433,23 @@ def test_cmd_config_with_repo_alias(monkeypatch, tmp_path, capsys):
     repo_path.mkdir()
     app = _multi_app()
     app.repositories["b"].path = str(repo_path)
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
 
-    rc = cli.cmd_config(argparse.Namespace(repos=["b"], config=None))
+    rc = cli.show_config(None, ["b"])
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["name"] == "b"
 
 
 def test_cmd_config_unknown_alias_exit2(monkeypatch):
-    monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_config(argparse.Namespace(repos=["missing"], config=None))
+    monkeypatch.setattr(cli, "_load", lambda _config_path: _multi_app())
+    rc = cli.show_config(None, ["missing"])
     assert rc == 2
 
 
 def test_cmd_config_multiple_repos_exit2(monkeypatch):
-    monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_config(argparse.Namespace(repos=["a", "b"], config=None))
+    monkeypatch.setattr(cli, "_load", lambda _config_path: _multi_app())
+    rc = cli.show_config(None, ["a", "b"])
     assert rc == 2
 
 
@@ -1457,15 +1457,17 @@ def test_cmd_config_unregistered_cwd_exit2(monkeypatch, tmp_path):
     other = tmp_path / "other"
     other.mkdir()
     monkeypatch.chdir(other)
-    monkeypatch.setattr(cli, "_load", lambda _args: _cfg())
-    rc = cli.cmd_config(argparse.Namespace(repos=None, config=None))
+    monkeypatch.setattr(cli, "_load", lambda _config_path: _cfg())
+    rc = cli.show_config(None, None)
     assert rc == 2
 
 
 def test_config_help_shows_repo():
-    parser = cli.build_parser()
-    config_parser = parser._subparsers._group_actions[0].choices["config"]
-    help_text = config_parser.format_help()
+    from click.testing import CliRunner
+
+    result = CliRunner().invoke(cli.app, ["config", "--help"])
+    assert result.exit_code == 0
+    help_text = result.output
     assert "--repo" in help_text
     assert "JSON" in help_text
 

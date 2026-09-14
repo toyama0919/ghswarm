@@ -178,13 +178,10 @@ def _add_repo_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def cmd_config(args) -> int:
-    app = _load(args)
+def show_config(config_path: str | None, repos: list[str] | tuple[str, ...] | None) -> int:
+    app = _load(config_path)
     try:
-        repo_aliases = list(dict.fromkeys(getattr(args, "repos", None) or []))
-        if len(repo_aliases) > 1:
-            raise ConfigError("config accepts only one repository. Specify exactly one -r.")
-        alias = repo_aliases[0] if repo_aliases else None
+        alias = _single_alias(repos, "config")
         cfg = _select_repo_for_config(app, alias)
     except ConfigError as e:
         log.error("%s", e)
@@ -214,6 +211,14 @@ def cmd_config(args) -> int:
     }
     print(json.dumps(payload, ensure_ascii=False))
     return 0
+
+
+@app.command("config")
+@repo_option
+@click.pass_context
+def config_command(ctx: click.Context, repos: tuple[str, ...]) -> int:
+    """Print the current repo's resolved config as JSON."""
+    return show_config(ctx.obj["config_path"], repos)
 
 
 def init_config(output: str | None = None, *, force: bool = False) -> int:
@@ -838,20 +843,27 @@ def _print_repo_status(cfg: RepoConfig) -> None:
         )
 
 
-def cmd_status(args) -> int:
-    app = _load(args)
+def show_status(config_path: str | None, repos: list[str] | tuple[str, ...] | None) -> int:
+    app = _load(config_path)
     try:
-        repos = _select_repos(app, getattr(args, "repos", None))
+        target_repos = _select_repos(app, repos)
     except ConfigError as e:
         log.error("%s", e)
         return 2
 
-    if not getattr(args, "repos", None):
-        repos = _filter_missing_paths(repos)
+    if not repos:
+        target_repos = _filter_missing_paths(target_repos)
 
-    for cfg in repos:
+    for cfg in target_repos:
         _print_repo_status(cfg)
     return 0
+
+
+@app.command("status")
+@repo_option
+@click.pass_context
+def status_command(ctx: click.Context, repos: tuple[str, ...]) -> int:
+    return show_status(ctx.obj["config_path"], repos)
 
 
 def cmd_history(args) -> int:
