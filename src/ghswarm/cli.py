@@ -75,9 +75,6 @@ def repo_option(function):
     )(function)
 
 
-_repo_option = repo_option
-
-
 @click.group(
     name="app",
     context_settings={"help_option_names": ["-h", "--help"]},
@@ -93,7 +90,7 @@ def app(ctx: click.Context, config_path: str | None, verbose: bool) -> None:
     setup_logging(verbose)
 
 
-def _select_repos(app: AppConfig, aliases: list[str] | None) -> list[RepoConfig]:
+def _select_repos(app: AppConfig, aliases: list[str] | tuple[str, ...] | None) -> list[RepoConfig]:
     """Return the list of target RepoConfigs filtered by alias. All if omitted."""
     if not aliases:
         return list(app.repositories.values())
@@ -216,7 +213,7 @@ def init_config(output: str | None = None, *, force: bool = False) -> int:
         return 1
     try:
         template = CONFIG_TEMPLATE.read_text(encoding="utf-8")
-    except (OSError, FileNotFoundError) as e:
+    except OSError as e:
         log.error("Config template not found (%s): %s", CONFIG_TEMPLATE, e)
         return 1
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -270,7 +267,7 @@ def install_skills(*, project: bool = False, dir: str | None = None, force: bool
                     shutil.rmtree(dest)
                 shutil.copytree(skill_dir, dest)
                 installed.append(skill_dir.name)
-    except (OSError, FileNotFoundError) as e:
+    except OSError as e:
         log.error("Failed to install skills: %s", e)
         return 1
 
@@ -539,7 +536,8 @@ def _run_parallel_cycle(
     if not repos:
         return
 
-    def _submit(pool: ProcessPoolExecutor) -> None:
+    pool_factory = ProcessPoolExecutor if executor_factory is None else executor_factory
+    with pool_factory(max_workers) as pool:
         futures = [
             pool.submit(
                 run_process_cycle_worker,
@@ -551,14 +549,6 @@ def _run_parallel_cycle(
             for repo_cfg in repos
         ]
         wait(futures)
-
-    if executor_factory is not None:
-        with executor_factory(max_workers) as pool:
-            _submit(pool)
-        return
-
-    with ProcessPoolExecutor(max_workers=max_workers) as pool:
-        _submit(pool)
 
 
 def run_issues(
@@ -779,6 +769,15 @@ def run_loop(
 
     daemon_mode = daemon_mode or restart
 
+    def stop_daemon() -> str:
+        return _stop_and_wait(
+            app,
+            repos,
+            sleep_fn=_stop_sleep_fn,
+            is_alive_fn=_stop_is_alive_fn,
+            read_activities_fn=_stop_read_activities_fn,
+        )
+
     if daemon_mode and stop:
         log.error("--daemon and --stop cannot be used together")
         return 1
@@ -787,23 +786,11 @@ def run_loop(
         return 1
 
     if stop:
-        _stop_and_wait(
-            app,
-            repos,
-            sleep_fn=_stop_sleep_fn,
-            is_alive_fn=_stop_is_alive_fn,
-            read_activities_fn=_stop_read_activities_fn,
-        )
+        stop_daemon()
         return 0
 
     if restart:
-        outcome = _stop_and_wait(
-            app,
-            repos,
-            sleep_fn=_stop_sleep_fn,
-            is_alive_fn=_stop_is_alive_fn,
-            read_activities_fn=_stop_read_activities_fn,
-        )
+        outcome = stop_daemon()
         if outcome == "interrupted":
             log.info("Restart canceled (the daemon's stop continues in the background)")
             return 130
@@ -974,12 +961,11 @@ def show_history(
             if alias not in app.repositories:
                 raise ConfigError(f"Unknown repository alias: {alias}")
             cfg = app.repositories[alias]
-            db_path = resolve_event_db_path(cfg.event_db)
             filter_repo = cfg.repo
         else:
             cfg = next(iter(app.repositories.values()))
-            db_path = resolve_event_db_path(cfg.event_db)
             filter_repo = None
+        db_path = resolve_event_db_path(cfg.event_db)
     except ConfigError as e:
         log.error("%s", e)
         return 2
