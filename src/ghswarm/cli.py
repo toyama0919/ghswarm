@@ -20,7 +20,6 @@ import signal
 import sys
 import threading
 import time
-import argparse
 from concurrent.futures import ProcessPoolExecutor, wait
 from datetime import datetime, timezone
 from importlib.resources import as_file, files
@@ -165,17 +164,6 @@ def _select_single_repo_by_cwd(app: AppConfig, alias: str | None) -> RepoConfig:
 def _select_repo_for_config(app: AppConfig, alias: str | None) -> RepoConfig:
     """Identify a single RepoConfig for config (explicit -r, or by matching cwd against path)."""
     return _select_single_repo_by_cwd(app, alias)
-
-
-def _add_repo_arg(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "-r",
-        "--repo",
-        action="append",
-        dest="repos",
-        metavar="ALIAS",
-        help="target repository alias (repeatable; all if omitted)",
-    )
 
 
 def show_config(config_path: str | None, repos: list[str] | tuple[str, ...] | None) -> int:
@@ -1033,126 +1021,6 @@ def history_command(
 ) -> int:
     """List the local SQLite event log chronologically."""
     return show_history(ctx.obj["config_path"], repos, issue=issue, limit=limit)
-
-
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="ghswarm", description="GitHub Issue-driven development PM agent"
-    )
-    p.add_argument("-c", "--config", help="path to the config file")
-    p.add_argument("-v", "--verbose", action="store_true", help="debug logging")
-    sub = p.add_subparsers(dest="command", required=True)
-
-    pi = sub.add_parser("init", help="write a config file template")
-    pi.add_argument(
-        "-o",
-        "--output",
-        help=f"output path (default {DEFAULT_CONFIG_PATH})",
-    )
-    pi.add_argument("--force", action="store_true", help="overwrite an existing file")
-    pi.set_defaults(func=cmd_init)
-
-    pr = sub.add_parser(
-        "run",
-        help="run the given Issue to completion (--step for a single step)",
-        description="run the given Issue to completion (--step for a single step)",
-    )
-    pr.add_argument("issues", nargs="+", help="Issue number(s)")
-    _add_repo_arg(pr)
-    for action in pr._actions:
-        if action.dest == "repos":
-            action.help = "target repository alias (auto-detected from cwd if omitted)"
-            break
-    pr.add_argument("--dry-run", action="store_true", help="show the plan without executing")
-    pr.add_argument("--step", action="store_true", help="advance a single step and exit")
-    pr.add_argument("--force", action="store_true", help="run ignoring the lock")
-    pr.add_argument(
-        "--resume",
-        action="store_true",
-        help="resume awaiting-clarification from the latest comment",
-    )
-    pr.set_defaults(func=cmd_run)
-
-    pl = sub.add_parser("loop", help="poll the target repositories' Issues in parallel")
-    _add_repo_arg(pl)
-    pl.add_argument("--dry-run", action="store_true")
-    pl.add_argument("--once", action="store_true", help="run a single pass and exit")
-    pl.add_argument(
-        "-d",
-        "--daemon",
-        action="store_true",
-        help="run as a background daemon (stdout/stderr go to a log file)",
-    )
-    pl.add_argument("--stop", action="store_true", help="stop the running daemon")
-    pl.add_argument(
-        "--restart",
-        action="store_true",
-        help="stop the running daemon and restart it (started as if with -d)",
-    )
-    pl.set_defaults(func=cmd_loop)
-
-    ps = sub.add_parser("status", help="list the Issue state for the target repositories")
-    _add_repo_arg(ps)
-    ps.set_defaults(func=cmd_status)
-
-    ph = sub.add_parser(
-        "history",
-        help="list the local event log chronologically",
-        description=(
-            "List the local SQLite event log chronologically."
-            " In v1 only a single DB is consulted (if event_db is split per repo,"
-            " only the first repo's DB is shown when unspecified)."
-        ),
-    )
-    _add_repo_arg(ph)
-    ph.add_argument("--issue", type=int, metavar="N", help="filter by Issue number")
-    ph.add_argument(
-        "--limit", type=int, default=50, metavar="N", help="number of entries to show (default 50)"
-    )
-    ph.set_defaults(func=cmd_history)
-
-    pc = sub.add_parser(
-        "config",
-        help="print the current repo's resolved config as JSON",
-        description="print the current repo's resolved config as JSON",
-    )
-    _add_repo_arg(pc)
-    pc.set_defaults(func=cmd_config)
-
-    pk = sub.add_parser(
-        "skills",
-        help="manage the bundled Claude Code skills (ghswarm-spec / -check / -requirements)",
-        description="manage the bundled Claude Code skills",
-    )
-    ksub = pk.add_subparsers(dest="skills_command", required=True)
-    ki = ksub.add_parser(
-        "install",
-        help="copy the bundled skills into a .claude/skills directory",
-        description=(
-            "Copy the bundled skills into ~/.claude/skills (default) or ./.claude/skills "
-            "(--project). The skills ship with the package, so they always match this CLI version."
-        ),
-    )
-    kg = ki.add_mutually_exclusive_group()
-    kg.add_argument(
-        "--global",
-        dest="project",
-        action="store_false",
-        help="install into ~/.claude/skills (default; available regardless of cwd)",
-    )
-    kg.add_argument(
-        "--project",
-        dest="project",
-        action="store_true",
-        help="install into ./.claude/skills of the current directory",
-    )
-    ki.add_argument("--dir", help="install into an explicit directory instead")
-    ki.add_argument(
-        "-f", "--force", action="store_true", help="overwrite skills that already exist"
-    )
-    ki.set_defaults(func=cmd_skills_install, project=False)
-
-    return p
 
 
 def main(argv: list[str] | None = None) -> int:
