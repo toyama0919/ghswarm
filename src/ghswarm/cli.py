@@ -727,20 +727,25 @@ def _wait_for_daemon_stop(
     )
 
 
-def _stop_and_wait(app, args) -> str:
+def _stop_and_wait(
+    app: AppConfig,
+    repo_aliases: list[str] | tuple[str, ...] | None,
+    *,
+    sleep_fn=time.sleep,
+    is_alive_fn=daemon.is_alive,
+    read_activities_fn=activity.read_activities,
+) -> str:
     pid_before = daemon.read_pid(app.daemon_pid)
     if daemon.stop_daemon(app.daemon_pid):
         log.info("Sent SIGTERM to the ghswarm daemon (pid=%d)", pid_before)
-        activity_dir = _resolve_activity_dir_for_stop(app, getattr(args, "repos", None))
+        activity_dir = _resolve_activity_dir_for_stop(app, repo_aliases)
         try:
             _wait_for_daemon_stop(
                 pid_before,
                 activity_dir,
-                sleep_fn=getattr(args, "_stop_sleep_fn", time.sleep),
-                is_alive_fn=getattr(args, "_stop_is_alive_fn", daemon.is_alive),
-                read_activities_fn=getattr(
-                    args, "_stop_read_activities_fn", activity.read_activities
-                ),
+                sleep_fn=sleep_fn,
+                is_alive_fn=is_alive_fn,
+                read_activities_fn=read_activities_fn,
             )
             print(
                 f"✔ ghswarm daemon stopped (pid={pid_before})",
@@ -760,14 +765,24 @@ def _stop_and_wait(app, args) -> str:
     return "absent"
 
 
-def cmd_loop(args) -> int:
+def run_loop(
+    config_path: str | None,
+    repos: list[str] | tuple[str, ...] | None,
+    *,
+    dry_run: bool = False,
+    once: bool = False,
+    daemon_mode: bool = False,
+    stop: bool = False,
+    restart: bool = False,
+    verbose: bool = False,
+    executor_factory: Callable[[int], ProcessPoolExecutor] | None = None,
+    stop_sleep_fn=time.sleep,
+    stop_is_alive_fn=daemon.is_alive,
+    stop_read_activities_fn=activity.read_activities,
+) -> int:
     _stop_event.clear()
 
-    app = _load(args)
-    daemon_mode = getattr(args, "daemon", False)
-    stop = getattr(args, "stop", False)
-    once = getattr(args, "once", False)
-    restart = getattr(args, "restart", False)
+    app = _load(config_path)
 
     if restart and stop:
         log.error("--restart and --stop cannot be used together")
@@ -786,11 +801,23 @@ def cmd_loop(args) -> int:
         return 1
 
     if stop:
-        _stop_and_wait(app, args)
+        _stop_and_wait(
+            app,
+            repos,
+            sleep_fn=stop_sleep_fn,
+            is_alive_fn=stop_is_alive_fn,
+            read_activities_fn=stop_read_activities_fn,
+        )
         return 0
 
     if restart:
-        outcome = _stop_and_wait(app, args)
+        outcome = _stop_and_wait(
+            app,
+            repos,
+            sleep_fn=stop_sleep_fn,
+            is_alive_fn=stop_is_alive_fn,
+            read_activities_fn=stop_read_activities_fn,
+        )
         if outcome == "interrupted":
             log.info("Restart canceled (the daemon's stop continues in the background)")
             return 130
@@ -812,22 +839,22 @@ def cmd_loop(args) -> int:
 
     try:
         try:
-            repos = _select_repos(app, getattr(args, "repos", None))
+            target_repos = _select_repos(app, repos)
         except ConfigError as e:
             log.error("%s", e)
             return 2
 
-        repos = _filter_missing_paths(repos)
+        target_repos = _filter_missing_paths(target_repos)
 
-        if not repos:
+        if not target_repos:
             log.warning("No target repositories")
             return 0
 
         if daemon_mode:
-            activity.clear_activity_dir(resolve_activity_dir(repos[0].activity_dir))
+            activity.clear_activity_dir(resolve_activity_dir(target_repos[0].activity_dir))
 
-        interval = min(r.poll_interval for r in repos)
-        names = ", ".join(r.name for r in repos)
+        interval = min(r.poll_interval for r in target_repos)
+        names = ", ".join(r.name for r in target_repos)
         log.info(
             "Polling started (interval=%ds, repos=%s, max_parallel=%d)",
             interval,
@@ -836,12 +863,12 @@ def cmd_loop(args) -> int:
         )
         while not _stop_event.is_set():
             _run_parallel_cycle(
-                repos,
+                target_repos,
                 max_workers=app.max_parallel_repos,
-                dry_run=args.dry_run,
-                verbose=getattr(args, "verbose", False),
+                dry_run=dry_run,
+                verbose=verbose,
                 daemon_pid=os.getpid() if daemon_mode else None,
-                executor_factory=getattr(args, "_executor_factory", None),
+                executor_factory=executor_factory,
             )
             if once:
                 return 0
@@ -850,6 +877,46 @@ def cmd_loop(args) -> int:
     finally:
         if daemon_mode:
             daemon.remove_pid(app.daemon_pid)
+
+
+@app.command("loop")
+@repo_option
+@click.option("--dry-run", is_flag=True, help="show the plan without executing")
+@click.option("--once", is_flag=True, help="run a single pass and exit")
+@click.option(
+    "-d",
+    "--daemon",
+    "daemon_mode",
+    is_flag=True,
+    help="run as a background daemon (stdout/stderr go to a log file)",
+)
+@click.option("--stop", is_flag=True, help="stop the running daemon")
+@click.option(
+    "--restart",
+    is_flag=True,
+    help="stop the running daemon and restart it (started as if with -d)",
+)
+@click.pass_context
+def loop_command(
+    ctx: click.Context,
+    repos: tuple[str, ...],
+    dry_run: bool,
+    once: bool,
+    daemon_mode: bool,
+    stop: bool,
+    restart: bool,
+) -> int:
+    """Poll the target repositories' Issues in parallel."""
+    return run_loop(
+        ctx.obj["config_path"],
+        repos,
+        dry_run=dry_run,
+        once=once,
+        daemon_mode=daemon_mode,
+        stop=stop,
+        restart=restart,
+        verbose=ctx.obj["verbose"],
+    )
 
 
 def _print_repo_status(cfg: RepoConfig) -> None:

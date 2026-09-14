@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -798,7 +797,7 @@ def test_cmd_loop_once_uses_parallel_cycle(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
     monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
 
-    rc = cli.cmd_loop(argparse.Namespace(repos=None, once=True, dry_run=False, verbose=False))
+    rc = cli.run_loop(None, None, once=True)
     assert rc == 0
     assert cycles == [["a", "b"]]
 
@@ -815,7 +814,7 @@ def test_cmd_loop_once_skips_repo_with_missing_path(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_load", lambda _args: app)
     monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
 
-    rc = cli.cmd_loop(argparse.Namespace(repos=None, once=True, dry_run=False, verbose=False))
+    rc = cli.run_loop(None, None, once=True)
     assert rc == 0
     assert cycles == [["a"]]
 
@@ -834,7 +833,7 @@ def test_cmd_loop_once_all_missing_paths_reports_no_target_repos(monkeypatch, tm
     monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
 
     with caplog.at_level("WARNING"):
-        rc = cli.cmd_loop(argparse.Namespace(repos=None, once=True, dry_run=False, verbose=False))
+        rc = cli.run_loop(None, None, once=True)
     assert rc == 0
     assert cycles == []
     assert any("No target repositories" in rec.message for rec in caplog.records)
@@ -856,7 +855,7 @@ def test_cmd_loop_idle_stop_interrupts_wait(monkeypatch):
     monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
     monkeypatch.setattr(cli._stop_event, "wait", fake_wait)
 
-    rc = cli.cmd_loop(argparse.Namespace(repos=None, once=False, dry_run=False, verbose=False))
+    rc = cli.run_loop(None, None)
     assert rc == 0
     assert cycles == [1]
     assert waits == [60]
@@ -878,7 +877,7 @@ def test_cmd_loop_stop_waits_for_cycle_completion(monkeypatch):
     monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
     monkeypatch.setattr(cli._stop_event, "wait", fake_wait)
 
-    rc = cli.cmd_loop(argparse.Namespace(repos=None, once=False, dry_run=False, verbose=False))
+    rc = cli.run_loop(None, None)
     assert rc == 0
     assert started == [1]
     assert finished == [1]
@@ -900,7 +899,7 @@ def test_cmd_loop_uses_min_poll_interval(monkeypatch):
     monkeypatch.setattr(cli._stop_event, "wait", fake_wait)
 
     with pytest.raises(KeyboardInterrupt):
-        cli.cmd_loop(argparse.Namespace(repos=None, once=False, dry_run=False, verbose=False))
+        cli.run_loop(None, None)
     assert waited == [30]
 
 
@@ -916,9 +915,7 @@ def test_cmd_loop_stop_ctrl_c_shows_background_message(monkeypatch, tmp_path, ca
     monkeypatch.setattr(cli.daemon, "stop_daemon", lambda _path: True)
     monkeypatch.setattr(cli, "_wait_for_daemon_stop", fake_wait)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(repos=None, once=False, dry_run=False, verbose=False, stop=True)
-    )
+    rc = cli.run_loop(None, None, stop=True)
     assert rc == 0
     assert "in the background" in capsys.readouterr().out
 
@@ -948,16 +945,12 @@ def test_cmd_loop_stop_waits_until_daemon_gone(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli.daemon, "read_pid", lambda _path: 4242)
     monkeypatch.setattr(cli.daemon, "stop_daemon", fake_stop)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            stop=True,
-            _stop_sleep_fn=fake_sleep,
-            _stop_is_alive_fn=fake_is_alive,
-        )
+    rc = cli.run_loop(
+        None,
+        None,
+        stop=True,
+        stop_sleep_fn=fake_sleep,
+        stop_is_alive_fn=fake_is_alive,
     )
     assert rc == 0
     assert stop_calls == [str(pid_path)]
@@ -993,17 +986,13 @@ def test_cmd_loop_stop_shows_running_repos(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli.daemon, "read_pid", lambda _path: 4242)
     monkeypatch.setattr(cli.daemon, "stop_daemon", lambda _path: True)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            stop=True,
-            _stop_sleep_fn=lambda _interval: None,
-            _stop_is_alive_fn=fake_is_alive,
-            _stop_read_activities_fn=fake_read,
-        )
+    rc = cli.run_loop(
+        None,
+        None,
+        stop=True,
+        stop_sleep_fn=lambda _interval: None,
+        stop_is_alive_fn=fake_is_alive,
+        stop_read_activities_fn=fake_read,
     )
     assert rc == 0
     out = capsys.readouterr().out
@@ -1020,9 +1009,7 @@ def test_cmd_loop_stop_no_daemon(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_load", lambda _args: app)
     monkeypatch.setattr(cli.daemon, "read_pid", lambda _path: None)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(repos=None, once=False, dry_run=False, verbose=False, stop=True)
-    )
+    rc = cli.run_loop(None, None, stop=True)
     assert rc == 0
 
 
@@ -1031,27 +1018,19 @@ def test_cmd_loop_daemon_rejects_double_start(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: app)
     monkeypatch.setattr(cli.daemon, "already_running", lambda _path: 9999)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(repos=None, once=False, dry_run=False, verbose=False, daemon=True)
-    )
+    rc = cli.run_loop(None, None, daemon_mode=True)
     assert rc == 1
 
 
 def test_cmd_loop_daemon_and_once_error(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_loop(
-        argparse.Namespace(repos=None, once=True, dry_run=False, verbose=False, daemon=True)
-    )
+    rc = cli.run_loop(None, None, once=True, daemon_mode=True)
     assert rc == 1
 
 
 def test_cmd_loop_daemon_and_stop_error(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None, once=False, dry_run=False, verbose=False, daemon=True, stop=True
-        )
-    )
+    rc = cli.run_loop(None, None, daemon_mode=True, stop=True)
     assert rc == 1
 
 
@@ -1074,15 +1053,11 @@ def test_cmd_loop_daemon_graceful_stop(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli._stop_event, "wait", fake_wait)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            daemon=True,
-            _executor_factory=lambda n: SyncExecutor(n),
-        )
+    rc = cli.run_loop(
+        None,
+        None,
+        daemon_mode=True,
+        executor_factory=lambda n: SyncExecutor(n),
     )
     assert rc == 0
     assert remove_calls == [str(pid_path)]
@@ -1121,17 +1096,13 @@ def test_cmd_loop_restart_stops_then_starts_daemon(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli._stop_event, "wait", fake_wait)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            restart=True,
-            _stop_sleep_fn=lambda _interval: None,
-            _stop_is_alive_fn=fake_is_alive,
-            _executor_factory=lambda n: SyncExecutor(n),
-        )
+    rc = cli.run_loop(
+        None,
+        None,
+        restart=True,
+        stop_sleep_fn=lambda _interval: None,
+        stop_is_alive_fn=fake_is_alive,
+        executor_factory=lambda n: SyncExecutor(n),
     )
     assert rc == 0
     assert alive_checks[0] >= 2
@@ -1158,15 +1129,11 @@ def test_cmd_loop_restart_start_when_no_daemon(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli._stop_event, "wait", fake_wait)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            restart=True,
-            _executor_factory=lambda n: SyncExecutor(n),
-        )
+    rc = cli.run_loop(
+        None,
+        None,
+        restart=True,
+        executor_factory=lambda n: SyncExecutor(n),
     )
     assert rc == 0
     assert daemonize_calls == [1]
@@ -1185,16 +1152,12 @@ def test_cmd_loop_restart_ctrl_c_returns_130(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.daemon, "stop_daemon", lambda _path: True)
     monkeypatch.setattr(cli.daemon, "daemonize", lambda *args, **kwargs: daemonize_calls.append(1))
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            restart=True,
-            _stop_sleep_fn=fake_sleep,
-            _stop_is_alive_fn=lambda _pid: True,
-        )
+    rc = cli.run_loop(
+        None,
+        None,
+        restart=True,
+        stop_sleep_fn=fake_sleep,
+        stop_is_alive_fn=lambda _pid: True,
     )
     assert rc == 130
     assert daemonize_calls == []
@@ -1202,30 +1165,13 @@ def test_cmd_loop_restart_ctrl_c_returns_130(monkeypatch, tmp_path):
 
 def test_cmd_loop_restart_and_stop_error(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            restart=True,
-            stop=True,
-        )
-    )
+    rc = cli.run_loop(None, None, restart=True, stop=True)
     assert rc == 1
 
 
 def test_cmd_loop_restart_and_once_error(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=True,
-            dry_run=False,
-            verbose=False,
-            restart=True,
-        )
-    )
+    rc = cli.run_loop(None, None, restart=True, once=True)
     assert rc == 1
 
 
