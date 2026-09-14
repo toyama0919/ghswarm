@@ -238,9 +238,7 @@ def init_command(output: str | None, force: bool) -> int:
     return init_config(output, force=force)
 
 
-def install_skills(
-    *, project: bool = False, dir: str | None = None, force: bool = False
-) -> int:
+def install_skills(*, project: bool = False, dir: str | None = None, force: bool = False) -> int:
     """Copy the bundled Claude Code skills into a .claude/skills directory.
 
     The skills are shipped as package data, so the installed version always matches
@@ -764,9 +762,9 @@ def run_loop(
     restart: bool = False,
     verbose: bool = False,
     executor_factory: Callable[[int], ProcessPoolExecutor] | None = None,
-    stop_sleep_fn=time.sleep,
-    stop_is_alive_fn=daemon.is_alive,
-    stop_read_activities_fn=activity.read_activities,
+    _stop_sleep_fn=time.sleep,
+    _stop_is_alive_fn=daemon.is_alive,
+    _stop_read_activities_fn=activity.read_activities,
 ) -> int:
     _stop_event.clear()
 
@@ -792,9 +790,9 @@ def run_loop(
         _stop_and_wait(
             app,
             repos,
-            sleep_fn=stop_sleep_fn,
-            is_alive_fn=stop_is_alive_fn,
-            read_activities_fn=stop_read_activities_fn,
+            sleep_fn=_stop_sleep_fn,
+            is_alive_fn=_stop_is_alive_fn,
+            read_activities_fn=_stop_read_activities_fn,
         )
         return 0
 
@@ -802,9 +800,9 @@ def run_loop(
         outcome = _stop_and_wait(
             app,
             repos,
-            sleep_fn=stop_sleep_fn,
-            is_alive_fn=stop_is_alive_fn,
-            read_activities_fn=stop_read_activities_fn,
+            sleep_fn=_stop_sleep_fn,
+            is_alive_fn=_stop_is_alive_fn,
+            read_activities_fn=_stop_read_activities_fn,
         )
         if outcome == "interrupted":
             log.info("Restart canceled (the daemon's stop continues in the background)")

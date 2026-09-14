@@ -949,8 +949,8 @@ def test_cmd_loop_stop_waits_until_daemon_gone(monkeypatch, tmp_path, capsys):
         None,
         None,
         stop=True,
-        stop_sleep_fn=fake_sleep,
-        stop_is_alive_fn=fake_is_alive,
+        _stop_sleep_fn=fake_sleep,
+        _stop_is_alive_fn=fake_is_alive,
     )
     assert rc == 0
     assert stop_calls == [str(pid_path)]
@@ -990,9 +990,9 @@ def test_cmd_loop_stop_shows_running_repos(monkeypatch, tmp_path, capsys):
         None,
         None,
         stop=True,
-        stop_sleep_fn=lambda _interval: None,
-        stop_is_alive_fn=fake_is_alive,
-        stop_read_activities_fn=fake_read,
+        _stop_sleep_fn=lambda _interval: None,
+        _stop_is_alive_fn=fake_is_alive,
+        _stop_read_activities_fn=fake_read,
     )
     assert rc == 0
     out = capsys.readouterr().out
@@ -1100,8 +1100,8 @@ def test_cmd_loop_restart_stops_then_starts_daemon(monkeypatch, tmp_path):
         None,
         None,
         restart=True,
-        stop_sleep_fn=lambda _interval: None,
-        stop_is_alive_fn=fake_is_alive,
+        _stop_sleep_fn=lambda _interval: None,
+        _stop_is_alive_fn=fake_is_alive,
         executor_factory=lambda n: SyncExecutor(n),
     )
     assert rc == 0
@@ -1156,8 +1156,8 @@ def test_cmd_loop_restart_ctrl_c_returns_130(monkeypatch, tmp_path):
         None,
         None,
         restart=True,
-        stop_sleep_fn=fake_sleep,
-        stop_is_alive_fn=lambda _pid: True,
+        _stop_sleep_fn=fake_sleep,
+        _stop_is_alive_fn=lambda _pid: True,
     )
     assert rc == 130
     assert daemonize_calls == []
