@@ -575,28 +575,33 @@ def _run_parallel_cycle(
         _submit(pool)
 
 
-def cmd_run(args) -> int:
-    app = _load(args)
+def run_issues(
+    config_path: str | None,
+    repos: list[str] | tuple[str, ...] | None,
+    issues: list[int] | tuple[int, ...],
+    *,
+    dry_run: bool = False,
+    step: bool = False,
+    force: bool = False,
+    resume: bool = False,
+) -> int:
+    app = _load(config_path)
     try:
-        repo_aliases = list(dict.fromkeys(getattr(args, "repos", None) or []))
-        if len(repo_aliases) > 1:
-            raise ConfigError("run accepts only one repository. Specify exactly one -r.")
-        alias = repo_aliases[0] if repo_aliases else None
+        alias = _single_alias(repos, "run")
         cfg = _select_single_repo_by_cwd(app, alias)
     except ConfigError as e:
         log.error("%s", e)
         return 2
 
     rlog = get_repo_logger(cfg.name) if cfg.name else log
-    orch = Orchestrator(cfg, dry_run=args.dry_run)
+    orch = Orchestrator(cfg, dry_run=dry_run)
     rc = 0
-    single_step = args.step or args.dry_run
+    single_step = step or dry_run
     try:
-        for number in args.issues:
-            num = int(number)
+        for num in issues:
             try:
                 if single_step:
-                    result = orch.process(num, force=args.force, resume=args.resume)
+                    result = orch.process(num, force=force, resume=resume)
                     rlog.info(
                         "Issue #%s -> %s: %s",
                         result.issue_number,
@@ -608,19 +613,55 @@ def cmd_run(args) -> int:
                         cfg,
                         orch,
                         num,
-                        force=args.force,
-                        resume=args.resume,
+                        force=force,
+                        resume=resume,
                         repo_log=rlog,
                     )
                     if issue_rc != 0:
                         rc = 1
             except Exception as e:
-                rlog.error("Error processing Issue #%s: %s", number, e)
+                rlog.error("Error processing Issue #%s: %s", num, e)
                 rc = 1
     except KeyboardInterrupt:
         rlog.info("Interrupted")
         return 130
     return rc
+
+
+@app.command("run")
+@repo_option
+@click.argument("issues", nargs=-1, required=True, type=int, metavar="ISSUE")
+@click.option("--dry-run", is_flag=True, help="show the plan without executing")
+@click.option("--step", is_flag=True, help="advance a single step and exit")
+@click.option("--force", is_flag=True, help="run ignoring the lock")
+@click.option(
+    "--resume",
+    is_flag=True,
+    help="resume awaiting-clarification from the latest comment",
+)
+@click.pass_context
+def run_command(
+    ctx: click.Context,
+    issues: tuple[int, ...],
+    dry_run: bool,
+    step: bool,
+    force: bool,
+    resume: bool,
+    repos: tuple[str, ...],
+) -> int:
+    """Run the given Issue to completion (--step for a single step).
+
+    The repository is auto-detected from the current cwd when --repo is omitted.
+    """
+    return run_issues(
+        ctx.obj["config_path"],
+        repos,
+        issues,
+        dry_run=dry_run,
+        step=step,
+        force=force,
+        resume=resume,
+    )
 
 
 def _handle_sigterm(signum, frame) -> None:

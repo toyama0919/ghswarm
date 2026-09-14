@@ -413,17 +413,19 @@ def test_run_to_completion_resume_passed_to_first_process_only():
     assert orch.process_calls[1]["resume"] is False
 
 
-def _run_args(**overrides):
+def _run_plain(**overrides):
     defaults = {
-        "config": None,
         "dry_run": False,
         "force": False,
         "resume": False,
         "step": False,
         "issues": ["42"],
+        "repos": None,
     }
     defaults.update(overrides)
-    return argparse.Namespace(**defaults)
+    repos = defaults.pop("repos")
+    defaults["issues"] = [int(number) for number in defaults["issues"]]
+    return cli.run_issues(None, repos, **defaults)
 
 
 def test_cmd_run_step_mode_single_process(monkeypatch):
@@ -437,7 +439,7 @@ def test_cmd_run_step_mode_single_process(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _cfg())
     monkeypatch.setattr(cli, "Orchestrator", lambda _cfg, **kw: MockOrch())
 
-    rc = cli.cmd_run(_run_args(step=True, repos=["test"]))
+    rc = _run_plain(step=True, repos=["test"])
     assert rc == 0
     assert len(calls) == 1
 
@@ -453,7 +455,7 @@ def test_cmd_run_dry_run_single_process(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _cfg())
     monkeypatch.setattr(cli, "Orchestrator", lambda _cfg, **kw: MockOrch())
 
-    rc = cli.cmd_run(_run_args(dry_run=True, repos=["test"]))
+    rc = _run_plain(dry_run=True, repos=["test"])
     assert rc == 0
     assert len(calls) == 1
 
@@ -469,7 +471,7 @@ def test_cmd_run_multiple_issues_aggregates_rc(monkeypatch):
     monkeypatch.setattr(cli, "Orchestrator", MagicMock())
     monkeypatch.setattr(cli, "_run_to_completion", mock_run)
 
-    rc = cli.cmd_run(_run_args(issues=["1", "2"], repos=["test"]))
+    rc = _run_plain(issues=["1", "2"], repos=["test"])
     assert rc == 1
     assert completed == [1, 2]
 
@@ -485,14 +487,16 @@ def test_cmd_run_resume_passed_to_run_to_completion(monkeypatch):
     monkeypatch.setattr(cli, "Orchestrator", MagicMock())
     monkeypatch.setattr(cli, "_run_to_completion", mock_run)
 
-    cli.cmd_run(_run_args(resume=True, repos=["test"]))
+    _run_plain(resume=True, repos=["test"])
     assert captured == [True]
 
 
 def test_run_help_shows_step_and_completion():
-    parser = cli.build_parser()
-    run_parser = parser._subparsers._group_actions[0].choices["run"]
-    help_text = run_parser.format_help()
+    from click.testing import CliRunner
+
+    result = CliRunner().invoke(cli.app, ["run", "--help"])
+    assert result.exit_code == 0
+    help_text = result.output
     assert "--step" in help_text
     assert "completion" in help_text
     assert "--repo" in help_text
@@ -557,7 +561,7 @@ def test_cmd_run_without_r_errors_when_no_cwd_match(monkeypatch, tmp_path):
     other.mkdir()
     monkeypatch.chdir(other)
     monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_run(_run_args())
+    rc = _run_plain()
     assert rc == 2
 
 
@@ -589,7 +593,7 @@ def test_cmd_run_selects_repo_by_cwd_when_r_omitted(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "Orchestrator", mock_orch)
     monkeypatch.setattr(cli, "_run_to_completion", lambda *a, **k: 0)
 
-    rc = cli.cmd_run(_run_args(step=True))
+    rc = _run_plain(step=True)
     assert rc == 0
     assert created == ["test"]
 
@@ -611,7 +615,7 @@ def test_cmd_run_no_cwd_match_errors_even_with_single_repo(monkeypatch, tmp_path
         }
     )
     monkeypatch.setattr(cli, "_load", lambda _args: app)
-    rc = cli.cmd_run(_run_args())
+    rc = _run_plain()
     assert rc == 2
 
 
@@ -652,7 +656,7 @@ def test_cmd_run_selects_longest_cwd_match(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "Orchestrator", mock_orch)
     monkeypatch.setattr(cli, "_run_to_completion", lambda *a, **k: 0)
 
-    rc = cli.cmd_run(_run_args(step=True))
+    rc = _run_plain(step=True)
     assert rc == 0
     assert created == ["child"]
 
@@ -672,7 +676,7 @@ def test_cmd_run_with_repo_alias(monkeypatch):
     monkeypatch.setattr(cli, "Orchestrator", mock_orch)
     monkeypatch.setattr(cli, "_run_to_completion", lambda *a, **k: 0)
 
-    rc = cli.cmd_run(_run_args(repos=["b"]))
+    rc = _run_plain(repos=["b"])
     assert rc == 0
     assert created == ["b"]
 
@@ -692,7 +696,7 @@ def test_cmd_run_duplicate_repo_alias_is_deduped(monkeypatch):
     monkeypatch.setattr(cli, "Orchestrator", mock_orch)
     monkeypatch.setattr(cli, "_run_to_completion", lambda *a, **k: 0)
 
-    rc = cli.cmd_run(_run_args(repos=["a", "a"]))
+    rc = _run_plain(repos=["a", "a"])
     assert rc == 0
     assert created == ["a"]
 
