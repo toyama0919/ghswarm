@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -413,17 +412,19 @@ def test_run_to_completion_resume_passed_to_first_process_only():
     assert orch.process_calls[1]["resume"] is False
 
 
-def _run_args(**overrides):
+def _run_plain(**overrides):
     defaults = {
-        "config": None,
         "dry_run": False,
         "force": False,
         "resume": False,
         "step": False,
         "issues": ["42"],
+        "repos": None,
     }
     defaults.update(overrides)
-    return argparse.Namespace(**defaults)
+    repos = defaults.pop("repos")
+    defaults["issues"] = [int(number) for number in defaults["issues"]]
+    return cli.run_issues(None, repos, **defaults)
 
 
 def test_cmd_run_step_mode_single_process(monkeypatch):
@@ -437,7 +438,7 @@ def test_cmd_run_step_mode_single_process(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _cfg())
     monkeypatch.setattr(cli, "Orchestrator", lambda _cfg, **kw: MockOrch())
 
-    rc = cli.cmd_run(_run_args(step=True, repos=["test"]))
+    rc = _run_plain(step=True, repos=["test"])
     assert rc == 0
     assert len(calls) == 1
 
@@ -453,7 +454,7 @@ def test_cmd_run_dry_run_single_process(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _cfg())
     monkeypatch.setattr(cli, "Orchestrator", lambda _cfg, **kw: MockOrch())
 
-    rc = cli.cmd_run(_run_args(dry_run=True, repos=["test"]))
+    rc = _run_plain(dry_run=True, repos=["test"])
     assert rc == 0
     assert len(calls) == 1
 
@@ -469,7 +470,7 @@ def test_cmd_run_multiple_issues_aggregates_rc(monkeypatch):
     monkeypatch.setattr(cli, "Orchestrator", MagicMock())
     monkeypatch.setattr(cli, "_run_to_completion", mock_run)
 
-    rc = cli.cmd_run(_run_args(issues=["1", "2"], repos=["test"]))
+    rc = _run_plain(issues=["1", "2"], repos=["test"])
     assert rc == 1
     assert completed == [1, 2]
 
@@ -485,14 +486,16 @@ def test_cmd_run_resume_passed_to_run_to_completion(monkeypatch):
     monkeypatch.setattr(cli, "Orchestrator", MagicMock())
     monkeypatch.setattr(cli, "_run_to_completion", mock_run)
 
-    cli.cmd_run(_run_args(resume=True, repos=["test"]))
+    _run_plain(resume=True, repos=["test"])
     assert captured == [True]
 
 
 def test_run_help_shows_step_and_completion():
-    parser = cli.build_parser()
-    run_parser = parser._subparsers._group_actions[0].choices["run"]
-    help_text = run_parser.format_help()
+    from click.testing import CliRunner
+
+    result = CliRunner().invoke(cli.app, ["run", "--help"])
+    assert result.exit_code == 0
+    help_text = result.output
     assert "--step" in help_text
     assert "completion" in help_text
     assert "--repo" in help_text
@@ -557,7 +560,7 @@ def test_cmd_run_without_r_errors_when_no_cwd_match(monkeypatch, tmp_path):
     other.mkdir()
     monkeypatch.chdir(other)
     monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_run(_run_args())
+    rc = _run_plain()
     assert rc == 2
 
 
@@ -585,11 +588,11 @@ def test_cmd_run_selects_repo_by_cwd_when_r_omitted(monkeypatch, tmp_path):
             )
         }
     )
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
     monkeypatch.setattr(cli, "Orchestrator", mock_orch)
     monkeypatch.setattr(cli, "_run_to_completion", lambda *a, **k: 0)
 
-    rc = cli.cmd_run(_run_args(step=True))
+    rc = _run_plain(step=True)
     assert rc == 0
     assert created == ["test"]
 
@@ -611,7 +614,7 @@ def test_cmd_run_no_cwd_match_errors_even_with_single_repo(monkeypatch, tmp_path
         }
     )
     monkeypatch.setattr(cli, "_load", lambda _args: app)
-    rc = cli.cmd_run(_run_args())
+    rc = _run_plain()
     assert rc == 2
 
 
@@ -652,7 +655,7 @@ def test_cmd_run_selects_longest_cwd_match(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "Orchestrator", mock_orch)
     monkeypatch.setattr(cli, "_run_to_completion", lambda *a, **k: 0)
 
-    rc = cli.cmd_run(_run_args(step=True))
+    rc = _run_plain(step=True)
     assert rc == 0
     assert created == ["child"]
 
@@ -672,7 +675,7 @@ def test_cmd_run_with_repo_alias(monkeypatch):
     monkeypatch.setattr(cli, "Orchestrator", mock_orch)
     monkeypatch.setattr(cli, "_run_to_completion", lambda *a, **k: 0)
 
-    rc = cli.cmd_run(_run_args(repos=["b"]))
+    rc = _run_plain(repos=["b"])
     assert rc == 0
     assert created == ["b"]
 
@@ -692,7 +695,7 @@ def test_cmd_run_duplicate_repo_alias_is_deduped(monkeypatch):
     monkeypatch.setattr(cli, "Orchestrator", mock_orch)
     monkeypatch.setattr(cli, "_run_to_completion", lambda *a, **k: 0)
 
-    rc = cli.cmd_run(_run_args(repos=["a", "a"]))
+    rc = _run_plain(repos=["a", "a"])
     assert rc == 0
     assert created == ["a"]
 
@@ -794,7 +797,7 @@ def test_cmd_loop_once_uses_parallel_cycle(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
     monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
 
-    rc = cli.cmd_loop(argparse.Namespace(repos=None, once=True, dry_run=False, verbose=False))
+    rc = cli.run_loop(None, None, once=True)
     assert rc == 0
     assert cycles == [["a", "b"]]
 
@@ -811,7 +814,7 @@ def test_cmd_loop_once_skips_repo_with_missing_path(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_load", lambda _args: app)
     monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
 
-    rc = cli.cmd_loop(argparse.Namespace(repos=None, once=True, dry_run=False, verbose=False))
+    rc = cli.run_loop(None, None, once=True)
     assert rc == 0
     assert cycles == [["a"]]
 
@@ -830,7 +833,7 @@ def test_cmd_loop_once_all_missing_paths_reports_no_target_repos(monkeypatch, tm
     monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
 
     with caplog.at_level("WARNING"):
-        rc = cli.cmd_loop(argparse.Namespace(repos=None, once=True, dry_run=False, verbose=False))
+        rc = cli.run_loop(None, None, once=True)
     assert rc == 0
     assert cycles == []
     assert any("No target repositories" in rec.message for rec in caplog.records)
@@ -852,7 +855,7 @@ def test_cmd_loop_idle_stop_interrupts_wait(monkeypatch):
     monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
     monkeypatch.setattr(cli._stop_event, "wait", fake_wait)
 
-    rc = cli.cmd_loop(argparse.Namespace(repos=None, once=False, dry_run=False, verbose=False))
+    rc = cli.run_loop(None, None)
     assert rc == 0
     assert cycles == [1]
     assert waits == [60]
@@ -874,7 +877,7 @@ def test_cmd_loop_stop_waits_for_cycle_completion(monkeypatch):
     monkeypatch.setattr(cli, "_run_parallel_cycle", fake_parallel)
     monkeypatch.setattr(cli._stop_event, "wait", fake_wait)
 
-    rc = cli.cmd_loop(argparse.Namespace(repos=None, once=False, dry_run=False, verbose=False))
+    rc = cli.run_loop(None, None)
     assert rc == 0
     assert started == [1]
     assert finished == [1]
@@ -896,7 +899,7 @@ def test_cmd_loop_uses_min_poll_interval(monkeypatch):
     monkeypatch.setattr(cli._stop_event, "wait", fake_wait)
 
     with pytest.raises(KeyboardInterrupt):
-        cli.cmd_loop(argparse.Namespace(repos=None, once=False, dry_run=False, verbose=False))
+        cli.run_loop(None, None)
     assert waited == [30]
 
 
@@ -912,9 +915,7 @@ def test_cmd_loop_stop_ctrl_c_shows_background_message(monkeypatch, tmp_path, ca
     monkeypatch.setattr(cli.daemon, "stop_daemon", lambda _path: True)
     monkeypatch.setattr(cli, "_wait_for_daemon_stop", fake_wait)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(repos=None, once=False, dry_run=False, verbose=False, stop=True)
-    )
+    rc = cli.run_loop(None, None, stop=True)
     assert rc == 0
     assert "in the background" in capsys.readouterr().out
 
@@ -944,16 +945,12 @@ def test_cmd_loop_stop_waits_until_daemon_gone(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli.daemon, "read_pid", lambda _path: 4242)
     monkeypatch.setattr(cli.daemon, "stop_daemon", fake_stop)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            stop=True,
-            _stop_sleep_fn=fake_sleep,
-            _stop_is_alive_fn=fake_is_alive,
-        )
+    rc = cli.run_loop(
+        None,
+        None,
+        stop=True,
+        _stop_sleep_fn=fake_sleep,
+        _stop_is_alive_fn=fake_is_alive,
     )
     assert rc == 0
     assert stop_calls == [str(pid_path)]
@@ -989,17 +986,13 @@ def test_cmd_loop_stop_shows_running_repos(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli.daemon, "read_pid", lambda _path: 4242)
     monkeypatch.setattr(cli.daemon, "stop_daemon", lambda _path: True)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            stop=True,
-            _stop_sleep_fn=lambda _interval: None,
-            _stop_is_alive_fn=fake_is_alive,
-            _stop_read_activities_fn=fake_read,
-        )
+    rc = cli.run_loop(
+        None,
+        None,
+        stop=True,
+        _stop_sleep_fn=lambda _interval: None,
+        _stop_is_alive_fn=fake_is_alive,
+        _stop_read_activities_fn=fake_read,
     )
     assert rc == 0
     out = capsys.readouterr().out
@@ -1016,9 +1009,7 @@ def test_cmd_loop_stop_no_daemon(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_load", lambda _args: app)
     monkeypatch.setattr(cli.daemon, "read_pid", lambda _path: None)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(repos=None, once=False, dry_run=False, verbose=False, stop=True)
-    )
+    rc = cli.run_loop(None, None, stop=True)
     assert rc == 0
 
 
@@ -1027,27 +1018,19 @@ def test_cmd_loop_daemon_rejects_double_start(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: app)
     monkeypatch.setattr(cli.daemon, "already_running", lambda _path: 9999)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(repos=None, once=False, dry_run=False, verbose=False, daemon=True)
-    )
+    rc = cli.run_loop(None, None, daemon_mode=True)
     assert rc == 1
 
 
 def test_cmd_loop_daemon_and_once_error(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_loop(
-        argparse.Namespace(repos=None, once=True, dry_run=False, verbose=False, daemon=True)
-    )
+    rc = cli.run_loop(None, None, once=True, daemon_mode=True)
     assert rc == 1
 
 
 def test_cmd_loop_daemon_and_stop_error(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None, once=False, dry_run=False, verbose=False, daemon=True, stop=True
-        )
-    )
+    rc = cli.run_loop(None, None, daemon_mode=True, stop=True)
     assert rc == 1
 
 
@@ -1070,15 +1053,11 @@ def test_cmd_loop_daemon_graceful_stop(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli._stop_event, "wait", fake_wait)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            daemon=True,
-            _executor_factory=lambda n: SyncExecutor(n),
-        )
+    rc = cli.run_loop(
+        None,
+        None,
+        daemon_mode=True,
+        executor_factory=lambda n: SyncExecutor(n),
     )
     assert rc == 0
     assert remove_calls == [str(pid_path)]
@@ -1117,17 +1096,13 @@ def test_cmd_loop_restart_stops_then_starts_daemon(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli._stop_event, "wait", fake_wait)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            restart=True,
-            _stop_sleep_fn=lambda _interval: None,
-            _stop_is_alive_fn=fake_is_alive,
-            _executor_factory=lambda n: SyncExecutor(n),
-        )
+    rc = cli.run_loop(
+        None,
+        None,
+        restart=True,
+        _stop_sleep_fn=lambda _interval: None,
+        _stop_is_alive_fn=fake_is_alive,
+        executor_factory=lambda n: SyncExecutor(n),
     )
     assert rc == 0
     assert alive_checks[0] >= 2
@@ -1154,15 +1129,11 @@ def test_cmd_loop_restart_start_when_no_daemon(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli._stop_event, "wait", fake_wait)
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            restart=True,
-            _executor_factory=lambda n: SyncExecutor(n),
-        )
+    rc = cli.run_loop(
+        None,
+        None,
+        restart=True,
+        executor_factory=lambda n: SyncExecutor(n),
     )
     assert rc == 0
     assert daemonize_calls == [1]
@@ -1181,16 +1152,12 @@ def test_cmd_loop_restart_ctrl_c_returns_130(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.daemon, "stop_daemon", lambda _path: True)
     monkeypatch.setattr(cli.daemon, "daemonize", lambda *args, **kwargs: daemonize_calls.append(1))
 
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            restart=True,
-            _stop_sleep_fn=fake_sleep,
-            _stop_is_alive_fn=lambda _pid: True,
-        )
+    rc = cli.run_loop(
+        None,
+        None,
+        restart=True,
+        _stop_sleep_fn=fake_sleep,
+        _stop_is_alive_fn=lambda _pid: True,
     )
     assert rc == 130
     assert daemonize_calls == []
@@ -1198,30 +1165,13 @@ def test_cmd_loop_restart_ctrl_c_returns_130(monkeypatch, tmp_path):
 
 def test_cmd_loop_restart_and_stop_error(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=False,
-            dry_run=False,
-            verbose=False,
-            restart=True,
-            stop=True,
-        )
-    )
+    rc = cli.run_loop(None, None, restart=True, stop=True)
     assert rc == 1
 
 
 def test_cmd_loop_restart_and_once_error(monkeypatch):
     monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_loop(
-        argparse.Namespace(
-            repos=None,
-            once=True,
-            dry_run=False,
-            verbose=False,
-            restart=True,
-        )
-    )
+    rc = cli.run_loop(None, None, restart=True, once=True)
     assert rc == 1
 
 
@@ -1237,7 +1187,7 @@ def test_cmd_status_skips_repo_with_missing_path(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_load", lambda _args: app)
     monkeypatch.setattr(cli, "_print_repo_status", fake_print_repo_status)
 
-    rc = cli.cmd_status(argparse.Namespace(repos=None, config=None))
+    rc = cli.show_status(None, None)
     assert rc == 0
     assert calls == ["a"]
 
@@ -1251,10 +1201,10 @@ def test_cmd_status_explicit_repo_not_filtered_by_missing_path(monkeypatch, tmp_
     app = _multi_app()
     app.repositories["b"].path = str(tmp_path / "does-not-exist")
 
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
     monkeypatch.setattr(cli, "_print_repo_status", fake_print_repo_status)
 
-    rc = cli.cmd_status(argparse.Namespace(repos=["b"], config=None))
+    rc = cli.show_status(None, ["b"])
     assert rc == 0
     assert calls == ["b"]
 
@@ -1365,9 +1315,9 @@ def test_cmd_config_json_output(monkeypatch, tmp_path, capsys):
     cfg.base_branch = "develop"
     cfg.branch_prefix = "feat-"
     app = AppConfig(repositories={"test": cfg})
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
 
-    rc = cli.cmd_config(argparse.Namespace(repos=None, config=None))
+    rc = cli.show_config(None, None)
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out == {
@@ -1398,10 +1348,10 @@ def test_cmd_config_detects_base_branch(monkeypatch, tmp_path, capsys):
     cfg.path = str(repo_path)
     cfg.base_branch = ""
     app = AppConfig(repositories={"test": cfg})
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
     monkeypatch.setattr(cli, "detect_default_branch", lambda path, env=None: "main")
 
-    rc = cli.cmd_config(argparse.Namespace(repos=None, config=None))
+    rc = cli.show_config(None, None)
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["base_branch"] == "main"
@@ -1415,14 +1365,14 @@ def test_cmd_config_base_branch_github_error_fallback(monkeypatch, tmp_path, cap
     cfg.path = str(repo_path)
     cfg.base_branch = ""
     app = AppConfig(repositories={"test": cfg})
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
 
     def boom(_path, env=None):
         raise GitHubError("network")
 
     monkeypatch.setattr(cli, "detect_default_branch", boom)
 
-    rc = cli.cmd_config(argparse.Namespace(repos=None, config=None))
+    rc = cli.show_config(None, None)
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["base_branch"] == ""
@@ -1433,23 +1383,23 @@ def test_cmd_config_with_repo_alias(monkeypatch, tmp_path, capsys):
     repo_path.mkdir()
     app = _multi_app()
     app.repositories["b"].path = str(repo_path)
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
 
-    rc = cli.cmd_config(argparse.Namespace(repos=["b"], config=None))
+    rc = cli.show_config(None, ["b"])
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["name"] == "b"
 
 
 def test_cmd_config_unknown_alias_exit2(monkeypatch):
-    monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_config(argparse.Namespace(repos=["missing"], config=None))
+    monkeypatch.setattr(cli, "_load", lambda _config_path: _multi_app())
+    rc = cli.show_config(None, ["missing"])
     assert rc == 2
 
 
 def test_cmd_config_multiple_repos_exit2(monkeypatch):
-    monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_config(argparse.Namespace(repos=["a", "b"], config=None))
+    monkeypatch.setattr(cli, "_load", lambda _config_path: _multi_app())
+    rc = cli.show_config(None, ["a", "b"])
     assert rc == 2
 
 
@@ -1457,15 +1407,17 @@ def test_cmd_config_unregistered_cwd_exit2(monkeypatch, tmp_path):
     other = tmp_path / "other"
     other.mkdir()
     monkeypatch.chdir(other)
-    monkeypatch.setattr(cli, "_load", lambda _args: _cfg())
-    rc = cli.cmd_config(argparse.Namespace(repos=None, config=None))
+    monkeypatch.setattr(cli, "_load", lambda _config_path: _cfg())
+    rc = cli.show_config(None, None)
     assert rc == 2
 
 
 def test_config_help_shows_repo():
-    parser = cli.build_parser()
-    config_parser = parser._subparsers._group_actions[0].choices["config"]
-    help_text = config_parser.format_help()
+    from click.testing import CliRunner
+
+    result = CliRunner().invoke(cli.app, ["config", "--help"])
+    assert result.exit_code == 0
+    help_text = result.output
     assert "--repo" in help_text
     assert "JSON" in help_text
 
@@ -1498,9 +1450,9 @@ def test_cmd_history_output_and_filters(monkeypatch, tmp_path, capsys):
     app = _multi_app()
     for cfg in app.repositories.values():
         cfg.event_db = str(db)
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
 
-    rc = cli.cmd_history(argparse.Namespace(repos=None, config=None, issue=None, limit=50))
+    rc = cli.show_history(None, None, issue=None, limit=50)
     assert rc == 0
     out = capsys.readouterr().out.strip().splitlines()
     assert len(out) == 3
@@ -1510,7 +1462,7 @@ def test_cmd_history_output_and_filters(monkeypatch, tmp_path, capsys):
     assert "reviewed" in out[1]
 
     capsys.readouterr()
-    rc = cli.cmd_history(argparse.Namespace(repos=["a"], config=None, issue=1, limit=10))
+    rc = cli.show_history(None, ["a"], issue=1, limit=10)
     assert rc == 0
     filtered = capsys.readouterr().out.strip()
     assert filtered.startswith("2026-07-18T10:00:00+00:00")
@@ -1522,21 +1474,23 @@ def test_cmd_history_output_and_filters(monkeypatch, tmp_path, capsys):
 def test_cmd_history_missing_db_exit0(monkeypatch, tmp_path, capsys):
     app = _cfg()
     app.repositories["test"].event_db = str(tmp_path / "missing.db")
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
 
-    rc = cli.cmd_history(argparse.Namespace(repos=None, config=None, issue=None, limit=50))
+    rc = cli.show_history(None, None, issue=None, limit=50)
     assert rc == 0
     assert "No events" in capsys.readouterr().out
 
 
 def test_cmd_history_multiple_repos_exit2(monkeypatch):
-    monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_history(argparse.Namespace(repos=["a", "b"], config=None, issue=None, limit=50))
+    monkeypatch.setattr(cli, "_load", lambda _config_path: _multi_app())
+    rc = cli.show_history(None, ["a", "b"], issue=None, limit=50)
     assert rc == 2
 
 
 def test_history_help_shows_subcommand():
-    parser = cli.build_parser()
-    assert "history" in parser._subparsers._group_actions[0].choices
-    help_text = parser.format_help()
+    from click.testing import CliRunner
+
+    result = CliRunner().invoke(cli.app, ["--help"])
+    assert result.exit_code == 0
+    help_text = result.output
     assert "history" in help_text

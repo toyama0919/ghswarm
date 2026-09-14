@@ -13,7 +13,6 @@ Config is centralized in the home file ~/.ghswarm.yaml. Select an alias with `-r
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import shutil
@@ -26,6 +25,8 @@ from datetime import datetime, timezone
 from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Callable
+
+import click
 
 from . import labels as lbl
 from . import state as st
@@ -46,15 +47,50 @@ SKILLS_SOURCE = files("ghswarm") / "skills"
 DEFAULT_CONFIG_PATH = Path.home() / ".ghswarm.yaml"
 
 
-def _load(args) -> AppConfig:
+def _load(config_path: str | None) -> AppConfig:
     try:
-        return load_config(args.config)
+        return load_config(config_path)
     except ConfigError as e:
         log.error("%s", e)
-        sys.exit(2)
+        raise click.UsageError(str(e)) from e
 
 
-def _select_repos(app: AppConfig, aliases: list[str] | None) -> list[RepoConfig]:
+def _single_alias(aliases: list[str] | tuple[str, ...] | None, command: str) -> str | None:
+    """Return one distinct repository alias, or raise for multiple aliases."""
+    unique_aliases = list(dict.fromkeys(aliases or []))
+    if len(unique_aliases) > 1:
+        raise ConfigError(f"{command} accepts only one repository. Specify exactly one -r.")
+    return unique_aliases[0] if unique_aliases else None
+
+
+def repo_option(function):
+    """Add the repeatable repository alias option shared by repository commands."""
+    return click.option(
+        "-r",
+        "--repo",
+        "repos",
+        multiple=True,
+        metavar="ALIAS",
+        help="target repository alias (repeatable; all if omitted)",
+    )(function)
+
+
+@click.group(
+    name="app",
+    context_settings={"help_option_names": ["-h", "--help"]},
+    help="GitHub Issue-driven development PM agent",
+)
+@click.option("-c", "--config", "config_path", help="path to the config file")
+@click.option("-v", "--verbose", is_flag=True, help="debug logging")
+@click.pass_context
+def app(ctx: click.Context, config_path: str | None, verbose: bool) -> None:
+    """GitHub Issue-driven development PM agent."""
+    ctx.ensure_object(dict)
+    ctx.obj.update(config_path=config_path, verbose=verbose)
+    setup_logging(verbose)
+
+
+def _select_repos(app: AppConfig, aliases: list[str] | tuple[str, ...] | None) -> list[RepoConfig]:
     """Return the list of target RepoConfigs filtered by alias. All if omitted."""
     if not aliases:
         return list(app.repositories.values())
@@ -127,24 +163,10 @@ def _select_repo_for_config(app: AppConfig, alias: str | None) -> RepoConfig:
     return _select_single_repo_by_cwd(app, alias)
 
 
-def _add_repo_arg(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "-r",
-        "--repo",
-        action="append",
-        dest="repos",
-        metavar="ALIAS",
-        help="target repository alias (repeatable; all if omitted)",
-    )
-
-
-def cmd_config(args) -> int:
-    app = _load(args)
+def show_config(config_path: str | None, repos: list[str] | tuple[str, ...] | None) -> int:
+    app = _load(config_path)
     try:
-        repo_aliases = list(dict.fromkeys(getattr(args, "repos", None) or []))
-        if len(repo_aliases) > 1:
-            raise ConfigError("config accepts only one repository. Specify exactly one -r.")
-        alias = repo_aliases[0] if repo_aliases else None
+        alias = _single_alias(repos, "config")
         cfg = _select_repo_for_config(app, alias)
     except ConfigError as e:
         log.error("%s", e)
@@ -176,14 +198,22 @@ def cmd_config(args) -> int:
     return 0
 
 
-def cmd_init(args) -> int:
-    dest = Path(args.output or DEFAULT_CONFIG_PATH)
-    if dest.exists() and not args.force:
+@app.command("config")
+@repo_option
+@click.pass_context
+def config_command(ctx: click.Context, repos: tuple[str, ...]) -> int:
+    """Print the current repo's resolved config as JSON."""
+    return show_config(ctx.obj["config_path"], repos)
+
+
+def init_config(output: str | None = None, *, force: bool = False) -> int:
+    dest = Path(output or DEFAULT_CONFIG_PATH)
+    if dest.exists() and not force:
         log.error("%s already exists (use --force to overwrite)", dest)
         return 1
     try:
         template = CONFIG_TEMPLATE.read_text(encoding="utf-8")
-    except (OSError, FileNotFoundError) as e:
+    except OSError as e:
         log.error("Config template not found (%s): %s", CONFIG_TEMPLATE, e)
         return 1
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -193,16 +223,28 @@ def cmd_init(args) -> int:
     return 0
 
 
-def cmd_skills_install(args) -> int:
+@app.command("init")
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(dir_okay=False, path_type=str),
+    help=f"output path (default {DEFAULT_CONFIG_PATH})",
+)
+@click.option("--force", is_flag=True, help="overwrite an existing file")
+def init_command(output: str | None, force: bool) -> int:
+    return init_config(output, force=force)
+
+
+def install_skills(*, project: bool = False, dir: str | None = None, force: bool = False) -> int:
     """Copy the bundled Claude Code skills into a .claude/skills directory.
 
     The skills are shipped as package data, so the installed version always matches
     the installed CLI. --global (default) targets ~/.claude/skills so they are
     available regardless of cwd; --project targets ./.claude/skills.
     """
-    if args.dir:
-        dest_root = Path(args.dir).expanduser()
-    elif args.project:
+    if dir:
+        dest_root = Path(dir).expanduser()
+    elif project:
         dest_root = Path.cwd() / ".claude" / "skills"
     else:
         dest_root = Path.home() / ".claude" / "skills"
@@ -218,14 +260,14 @@ def cmd_skills_install(args) -> int:
             dest_root.mkdir(parents=True, exist_ok=True)
             for skill_dir in skill_dirs:
                 dest = dest_root / skill_dir.name
-                if dest.exists() and not args.force:
+                if dest.exists() and not force:
                     skipped.append(skill_dir.name)
                     continue
                 if dest.exists():
                     shutil.rmtree(dest)
                 shutil.copytree(skill_dir, dest)
                 installed.append(skill_dir.name)
-    except (OSError, FileNotFoundError) as e:
+    except OSError as e:
         log.error("Failed to install skills: %s", e)
         return 1
 
@@ -236,6 +278,37 @@ def cmd_skills_install(args) -> int:
     if not installed and skipped:
         log.info("All skills already present. Re-run with --force to update them.")
     return 0
+
+
+@app.group()
+def skills() -> None:
+    """Manage the bundled Claude Code skills."""
+
+
+@skills.command("install")
+@click.option(
+    "--global",
+    "global_install",
+    is_flag=True,
+    help="install into ~/.claude/skills (default; available regardless of cwd)",
+)
+@click.option(
+    "--project",
+    is_flag=True,
+    help="install into ./.claude/skills of the current directory",
+)
+@click.option(
+    "--dir",
+    type=click.Path(file_okay=False, path_type=str),
+    help="install into an explicit directory instead",
+)
+@click.option("-f", "--force", is_flag=True, help="overwrite skills that already exist")
+def skills_install_command(
+    global_install: bool, project: bool, dir: str | None, force: bool
+) -> int:
+    if global_install and project:
+        raise click.UsageError("--global and --project cannot be used together")
+    return install_skills(project=project, dir=dir, force=force)
 
 
 def _filtered_issues(cfg: RepoConfig, gh: GitHub):
@@ -463,7 +536,8 @@ def _run_parallel_cycle(
     if not repos:
         return
 
-    def _submit(pool: ProcessPoolExecutor) -> None:
+    pool_factory = ProcessPoolExecutor if executor_factory is None else executor_factory
+    with pool_factory(max_workers) as pool:
         futures = [
             pool.submit(
                 run_process_cycle_worker,
@@ -476,37 +550,34 @@ def _run_parallel_cycle(
         ]
         wait(futures)
 
-    if executor_factory is not None:
-        with executor_factory(max_workers) as pool:
-            _submit(pool)
-        return
 
-    with ProcessPoolExecutor(max_workers=max_workers) as pool:
-        _submit(pool)
-
-
-def cmd_run(args) -> int:
-    app = _load(args)
+def run_issues(
+    config_path: str | None,
+    repos: list[str] | tuple[str, ...] | None,
+    issues: list[int] | tuple[int, ...],
+    *,
+    dry_run: bool = False,
+    step: bool = False,
+    force: bool = False,
+    resume: bool = False,
+) -> int:
+    app = _load(config_path)
     try:
-        repo_aliases = list(dict.fromkeys(getattr(args, "repos", None) or []))
-        if len(repo_aliases) > 1:
-            raise ConfigError("run accepts only one repository. Specify exactly one -r.")
-        alias = repo_aliases[0] if repo_aliases else None
+        alias = _single_alias(repos, "run")
         cfg = _select_single_repo_by_cwd(app, alias)
     except ConfigError as e:
         log.error("%s", e)
         return 2
 
     rlog = get_repo_logger(cfg.name) if cfg.name else log
-    orch = Orchestrator(cfg, dry_run=args.dry_run)
+    orch = Orchestrator(cfg, dry_run=dry_run)
     rc = 0
-    single_step = args.step or args.dry_run
+    single_step = step or dry_run
     try:
-        for number in args.issues:
-            num = int(number)
+        for num in issues:
             try:
                 if single_step:
-                    result = orch.process(num, force=args.force, resume=args.resume)
+                    result = orch.process(num, force=force, resume=resume)
                     rlog.info(
                         "Issue #%s -> %s: %s",
                         result.issue_number,
@@ -518,19 +589,55 @@ def cmd_run(args) -> int:
                         cfg,
                         orch,
                         num,
-                        force=args.force,
-                        resume=args.resume,
+                        force=force,
+                        resume=resume,
                         repo_log=rlog,
                     )
                     if issue_rc != 0:
                         rc = 1
             except Exception as e:
-                rlog.error("Error processing Issue #%s: %s", number, e)
+                rlog.error("Error processing Issue #%s: %s", num, e)
                 rc = 1
     except KeyboardInterrupt:
         rlog.info("Interrupted")
         return 130
     return rc
+
+
+@app.command("run")
+@repo_option
+@click.argument("issues", nargs=-1, required=True, type=int, metavar="ISSUE")
+@click.option("--dry-run", is_flag=True, help="show the plan without executing")
+@click.option("--step", is_flag=True, help="advance a single step and exit")
+@click.option("--force", is_flag=True, help="run ignoring the lock")
+@click.option(
+    "--resume",
+    is_flag=True,
+    help="resume awaiting-clarification from the latest comment",
+)
+@click.pass_context
+def run_command(
+    ctx: click.Context,
+    issues: tuple[int, ...],
+    dry_run: bool,
+    step: bool,
+    force: bool,
+    resume: bool,
+    repos: tuple[str, ...],
+) -> int:
+    """Run the given Issue to completion (--step for a single step).
+
+    The repository is auto-detected from the current cwd when --repo is omitted.
+    """
+    return run_issues(
+        ctx.obj["config_path"],
+        repos,
+        issues,
+        dry_run=dry_run,
+        step=step,
+        force=force,
+        resume=resume,
+    )
 
 
 def _handle_sigterm(signum, frame) -> None:
@@ -596,20 +703,25 @@ def _wait_for_daemon_stop(
     )
 
 
-def _stop_and_wait(app, args) -> str:
+def _stop_and_wait(
+    app: AppConfig,
+    repo_aliases: list[str] | tuple[str, ...] | None,
+    *,
+    sleep_fn=time.sleep,
+    is_alive_fn=daemon.is_alive,
+    read_activities_fn=activity.read_activities,
+) -> str:
     pid_before = daemon.read_pid(app.daemon_pid)
     if daemon.stop_daemon(app.daemon_pid):
         log.info("Sent SIGTERM to the ghswarm daemon (pid=%d)", pid_before)
-        activity_dir = _resolve_activity_dir_for_stop(app, getattr(args, "repos", None))
+        activity_dir = _resolve_activity_dir_for_stop(app, repo_aliases)
         try:
             _wait_for_daemon_stop(
                 pid_before,
                 activity_dir,
-                sleep_fn=getattr(args, "_stop_sleep_fn", time.sleep),
-                is_alive_fn=getattr(args, "_stop_is_alive_fn", daemon.is_alive),
-                read_activities_fn=getattr(
-                    args, "_stop_read_activities_fn", activity.read_activities
-                ),
+                sleep_fn=sleep_fn,
+                is_alive_fn=is_alive_fn,
+                read_activities_fn=read_activities_fn,
             )
             print(
                 f"✔ ghswarm daemon stopped (pid={pid_before})",
@@ -629,14 +741,24 @@ def _stop_and_wait(app, args) -> str:
     return "absent"
 
 
-def cmd_loop(args) -> int:
+def run_loop(
+    config_path: str | None,
+    repos: list[str] | tuple[str, ...] | None,
+    *,
+    dry_run: bool = False,
+    once: bool = False,
+    daemon_mode: bool = False,
+    stop: bool = False,
+    restart: bool = False,
+    verbose: bool = False,
+    executor_factory: Callable[[int], ProcessPoolExecutor] | None = None,
+    _stop_sleep_fn=time.sleep,
+    _stop_is_alive_fn=daemon.is_alive,
+    _stop_read_activities_fn=activity.read_activities,
+) -> int:
     _stop_event.clear()
 
-    app = _load(args)
-    daemon_mode = getattr(args, "daemon", False)
-    stop = getattr(args, "stop", False)
-    once = getattr(args, "once", False)
-    restart = getattr(args, "restart", False)
+    app = _load(config_path)
 
     if restart and stop:
         log.error("--restart and --stop cannot be used together")
@@ -647,6 +769,15 @@ def cmd_loop(args) -> int:
 
     daemon_mode = daemon_mode or restart
 
+    def stop_daemon() -> str:
+        return _stop_and_wait(
+            app,
+            repos,
+            sleep_fn=_stop_sleep_fn,
+            is_alive_fn=_stop_is_alive_fn,
+            read_activities_fn=_stop_read_activities_fn,
+        )
+
     if daemon_mode and stop:
         log.error("--daemon and --stop cannot be used together")
         return 1
@@ -655,11 +786,11 @@ def cmd_loop(args) -> int:
         return 1
 
     if stop:
-        _stop_and_wait(app, args)
+        stop_daemon()
         return 0
 
     if restart:
-        outcome = _stop_and_wait(app, args)
+        outcome = stop_daemon()
         if outcome == "interrupted":
             log.info("Restart canceled (the daemon's stop continues in the background)")
             return 130
@@ -681,22 +812,22 @@ def cmd_loop(args) -> int:
 
     try:
         try:
-            repos = _select_repos(app, getattr(args, "repos", None))
+            target_repos = _select_repos(app, repos)
         except ConfigError as e:
             log.error("%s", e)
             return 2
 
-        repos = _filter_missing_paths(repos)
+        target_repos = _filter_missing_paths(target_repos)
 
-        if not repos:
+        if not target_repos:
             log.warning("No target repositories")
             return 0
 
         if daemon_mode:
-            activity.clear_activity_dir(resolve_activity_dir(repos[0].activity_dir))
+            activity.clear_activity_dir(resolve_activity_dir(target_repos[0].activity_dir))
 
-        interval = min(r.poll_interval for r in repos)
-        names = ", ".join(r.name for r in repos)
+        interval = min(r.poll_interval for r in target_repos)
+        names = ", ".join(r.name for r in target_repos)
         log.info(
             "Polling started (interval=%ds, repos=%s, max_parallel=%d)",
             interval,
@@ -705,12 +836,12 @@ def cmd_loop(args) -> int:
         )
         while not _stop_event.is_set():
             _run_parallel_cycle(
-                repos,
+                target_repos,
                 max_workers=app.max_parallel_repos,
-                dry_run=args.dry_run,
-                verbose=getattr(args, "verbose", False),
+                dry_run=dry_run,
+                verbose=verbose,
                 daemon_pid=os.getpid() if daemon_mode else None,
-                executor_factory=getattr(args, "_executor_factory", None),
+                executor_factory=executor_factory,
             )
             if once:
                 return 0
@@ -719,6 +850,46 @@ def cmd_loop(args) -> int:
     finally:
         if daemon_mode:
             daemon.remove_pid(app.daemon_pid)
+
+
+@app.command("loop")
+@repo_option
+@click.option("--dry-run", is_flag=True, help="show the plan without executing")
+@click.option("--once", is_flag=True, help="run a single pass and exit")
+@click.option(
+    "-d",
+    "--daemon",
+    "daemon_mode",
+    is_flag=True,
+    help="run as a background daemon (stdout/stderr go to a log file)",
+)
+@click.option("--stop", is_flag=True, help="stop the running daemon")
+@click.option(
+    "--restart",
+    is_flag=True,
+    help="stop the running daemon and restart it (started as if with -d)",
+)
+@click.pass_context
+def loop_command(
+    ctx: click.Context,
+    repos: tuple[str, ...],
+    dry_run: bool,
+    once: bool,
+    daemon_mode: bool,
+    stop: bool,
+    restart: bool,
+) -> int:
+    """Poll the target repositories' Issues in parallel."""
+    return run_loop(
+        ctx.obj["config_path"],
+        repos,
+        dry_run=dry_run,
+        once=once,
+        daemon_mode=daemon_mode,
+        stop=stop,
+        restart=restart,
+        verbose=ctx.obj["verbose"],
+    )
 
 
 def _print_repo_status(cfg: RepoConfig) -> None:
@@ -753,47 +924,56 @@ def _print_repo_status(cfg: RepoConfig) -> None:
         )
 
 
-def cmd_status(args) -> int:
-    app = _load(args)
+def show_status(config_path: str | None, repos: list[str] | tuple[str, ...] | None) -> int:
+    app = _load(config_path)
     try:
-        repos = _select_repos(app, getattr(args, "repos", None))
+        target_repos = _select_repos(app, repos)
     except ConfigError as e:
         log.error("%s", e)
         return 2
 
-    if not getattr(args, "repos", None):
-        repos = _filter_missing_paths(repos)
+    if not repos:
+        target_repos = _filter_missing_paths(target_repos)
 
-    for cfg in repos:
+    for cfg in target_repos:
         _print_repo_status(cfg)
     return 0
 
 
-def cmd_history(args) -> int:
-    app = _load(args)
+@app.command("status")
+@repo_option
+@click.pass_context
+def status_command(ctx: click.Context, repos: tuple[str, ...]) -> int:
+    return show_status(ctx.obj["config_path"], repos)
+
+
+def show_history(
+    config_path: str | None,
+    repos: list[str] | tuple[str, ...] | None,
+    *,
+    issue: int | None = None,
+    limit: int = 50,
+) -> int:
+    app = _load(config_path)
     try:
-        repo_aliases = list(dict.fromkeys(getattr(args, "repos", None) or []))
-        if len(repo_aliases) > 1:
-            raise ConfigError("history accepts only one repository. Specify exactly one -r.")
-        alias = repo_aliases[0] if repo_aliases else None
+        alias = _single_alias(repos, "history")
         if alias:
             if alias not in app.repositories:
                 raise ConfigError(f"Unknown repository alias: {alias}")
             cfg = app.repositories[alias]
-            db_path = resolve_event_db_path(cfg.event_db)
             filter_repo = cfg.repo
         else:
             cfg = next(iter(app.repositories.values()))
-            db_path = resolve_event_db_path(cfg.event_db)
             filter_repo = None
+        db_path = resolve_event_db_path(cfg.event_db)
     except ConfigError as e:
         log.error("%s", e)
         return 2
 
     events = EventLog(db_path).read(
         repo=filter_repo,
-        issue=getattr(args, "issue", None),
-        limit=args.limit,
+        issue=issue,
+        limit=limit,
     )
     if not events:
         print("No events")
@@ -808,131 +988,39 @@ def cmd_history(args) -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="ghswarm", description="GitHub Issue-driven development PM agent"
-    )
-    p.add_argument("-c", "--config", help="path to the config file")
-    p.add_argument("-v", "--verbose", action="store_true", help="debug logging")
-    sub = p.add_subparsers(dest="command", required=True)
-
-    pi = sub.add_parser("init", help="write a config file template")
-    pi.add_argument(
-        "-o",
-        "--output",
-        help=f"output path (default {DEFAULT_CONFIG_PATH})",
-    )
-    pi.add_argument("--force", action="store_true", help="overwrite an existing file")
-    pi.set_defaults(func=cmd_init)
-
-    pr = sub.add_parser(
-        "run",
-        help="run the given Issue to completion (--step for a single step)",
-        description="run the given Issue to completion (--step for a single step)",
-    )
-    pr.add_argument("issues", nargs="+", help="Issue number(s)")
-    _add_repo_arg(pr)
-    for action in pr._actions:
-        if action.dest == "repos":
-            action.help = "target repository alias (auto-detected from cwd if omitted)"
-            break
-    pr.add_argument("--dry-run", action="store_true", help="show the plan without executing")
-    pr.add_argument("--step", action="store_true", help="advance a single step and exit")
-    pr.add_argument("--force", action="store_true", help="run ignoring the lock")
-    pr.add_argument(
-        "--resume",
-        action="store_true",
-        help="resume awaiting-clarification from the latest comment",
-    )
-    pr.set_defaults(func=cmd_run)
-
-    pl = sub.add_parser("loop", help="poll the target repositories' Issues in parallel")
-    _add_repo_arg(pl)
-    pl.add_argument("--dry-run", action="store_true")
-    pl.add_argument("--once", action="store_true", help="run a single pass and exit")
-    pl.add_argument(
-        "-d",
-        "--daemon",
-        action="store_true",
-        help="run as a background daemon (stdout/stderr go to a log file)",
-    )
-    pl.add_argument("--stop", action="store_true", help="stop the running daemon")
-    pl.add_argument(
-        "--restart",
-        action="store_true",
-        help="stop the running daemon and restart it (started as if with -d)",
-    )
-    pl.set_defaults(func=cmd_loop)
-
-    ps = sub.add_parser("status", help="list the Issue state for the target repositories")
-    _add_repo_arg(ps)
-    ps.set_defaults(func=cmd_status)
-
-    ph = sub.add_parser(
-        "history",
-        help="list the local event log chronologically",
-        description=(
-            "List the local SQLite event log chronologically."
-            " In v1 only a single DB is consulted (if event_db is split per repo,"
-            " only the first repo's DB is shown when unspecified)."
-        ),
-    )
-    _add_repo_arg(ph)
-    ph.add_argument("--issue", type=int, metavar="N", help="filter by Issue number")
-    ph.add_argument(
-        "--limit", type=int, default=50, metavar="N", help="number of entries to show (default 50)"
-    )
-    ph.set_defaults(func=cmd_history)
-
-    pc = sub.add_parser(
-        "config",
-        help="print the current repo's resolved config as JSON",
-        description="print the current repo's resolved config as JSON",
-    )
-    _add_repo_arg(pc)
-    pc.set_defaults(func=cmd_config)
-
-    pk = sub.add_parser(
-        "skills",
-        help="manage the bundled Claude Code skills (ghswarm-spec / -check / -requirements)",
-        description="manage the bundled Claude Code skills",
-    )
-    ksub = pk.add_subparsers(dest="skills_command", required=True)
-    ki = ksub.add_parser(
-        "install",
-        help="copy the bundled skills into a .claude/skills directory",
-        description=(
-            "Copy the bundled skills into ~/.claude/skills (default) or ./.claude/skills "
-            "(--project). The skills ship with the package, so they always match this CLI version."
-        ),
-    )
-    kg = ki.add_mutually_exclusive_group()
-    kg.add_argument(
-        "--global",
-        dest="project",
-        action="store_false",
-        help="install into ~/.claude/skills (default; available regardless of cwd)",
-    )
-    kg.add_argument(
-        "--project",
-        dest="project",
-        action="store_true",
-        help="install into ./.claude/skills of the current directory",
-    )
-    ki.add_argument("--dir", help="install into an explicit directory instead")
-    ki.add_argument(
-        "-f", "--force", action="store_true", help="overwrite skills that already exist"
-    )
-    ki.set_defaults(func=cmd_skills_install, project=False)
-
-    return p
+@app.command("history")
+@repo_option
+@click.option("--issue", type=int, metavar="N", help="filter by Issue number")
+@click.option(
+    "--limit",
+    type=int,
+    default=50,
+    show_default=True,
+    metavar="N",
+    help="number of entries to show",
+)
+@click.pass_context
+def history_command(
+    ctx: click.Context, repos: tuple[str, ...], issue: int | None, limit: int
+) -> int:
+    """List the local SQLite event log chronologically."""
+    return show_history(ctx.obj["config_path"], repos, issue=issue, limit=limit)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    setup_logging(getattr(args, "verbose", False))
-    return args.func(args)
+    try:
+        result = app.main(args=argv, prog_name="ghswarm", standalone_mode=False)
+    except click.exceptions.Exit as e:
+        return e.exit_code
+    except click.UsageError as e:
+        e.show()
+        return e.exit_code
+    except click.ClickException as e:
+        e.show()
+        return e.exit_code
+    except click.Abort:
+        return 130
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":
