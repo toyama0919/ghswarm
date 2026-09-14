@@ -13,7 +13,6 @@ Config is centralized in the home file ~/.ghswarm.yaml. Select an alias with `-r
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import shutil
@@ -21,11 +20,14 @@ import signal
 import sys
 import threading
 import time
+import argparse
 from concurrent.futures import ProcessPoolExecutor, wait
 from datetime import datetime, timezone
 from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Callable
+
+import click
 
 from . import labels as lbl
 from . import state as st
@@ -46,12 +48,50 @@ SKILLS_SOURCE = files("ghswarm") / "skills"
 DEFAULT_CONFIG_PATH = Path.home() / ".ghswarm.yaml"
 
 
-def _load(args) -> AppConfig:
+def _load(config_path: str | None) -> AppConfig:
     try:
-        return load_config(args.config)
+        return load_config(config_path)
     except ConfigError as e:
         log.error("%s", e)
-        sys.exit(2)
+        raise click.UsageError(str(e)) from e
+
+
+def _single_alias(aliases: list[str] | tuple[str, ...] | None, command: str) -> str | None:
+    """Return one distinct repository alias, or raise for multiple aliases."""
+    unique_aliases = list(dict.fromkeys(aliases or []))
+    if len(unique_aliases) > 1:
+        raise ConfigError(f"{command} accepts only one repository. Specify exactly one -r.")
+    return unique_aliases[0] if unique_aliases else None
+
+
+def repo_option(function):
+    """Add the repeatable repository alias option shared by repository commands."""
+    return click.option(
+        "-r",
+        "--repo",
+        "repos",
+        multiple=True,
+        metavar="ALIAS",
+        help="target repository alias (repeatable; all if omitted)",
+    )(function)
+
+
+_repo_option = repo_option
+
+
+@click.group(
+    name="app",
+    context_settings={"help_option_names": ["-h", "--help"]},
+    help="GitHub Issue-driven development PM agent",
+)
+@click.option("-c", "--config", "config_path", help="path to the config file")
+@click.option("-v", "--verbose", is_flag=True, help="debug logging")
+@click.pass_context
+def app(ctx: click.Context, config_path: str | None, verbose: bool) -> None:
+    """GitHub Issue-driven development PM agent."""
+    ctx.ensure_object(dict)
+    ctx.obj.update(config_path=config_path, verbose=verbose)
+    setup_logging(verbose)
 
 
 def _select_repos(app: AppConfig, aliases: list[str] | None) -> list[RepoConfig]:
@@ -929,10 +969,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    setup_logging(getattr(args, "verbose", False))
-    return args.func(args)
+    try:
+        result = app.main(args=argv, prog_name="ghswarm", standalone_mode=False)
+    except click.exceptions.Exit as e:
+        return e.exit_code
+    except click.UsageError as e:
+        e.show()
+        return e.exit_code
+    except click.ClickException as e:
+        e.show()
+        return e.exit_code
+    except click.Abort:
+        return 130
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":
