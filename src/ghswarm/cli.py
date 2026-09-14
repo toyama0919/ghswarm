@@ -866,13 +866,16 @@ def status_command(ctx: click.Context, repos: tuple[str, ...]) -> int:
     return show_status(ctx.obj["config_path"], repos)
 
 
-def cmd_history(args) -> int:
-    app = _load(args)
+def show_history(
+    config_path: str | None,
+    repos: list[str] | tuple[str, ...] | None,
+    *,
+    issue: int | None = None,
+    limit: int = 50,
+) -> int:
+    app = _load(config_path)
     try:
-        repo_aliases = list(dict.fromkeys(getattr(args, "repos", None) or []))
-        if len(repo_aliases) > 1:
-            raise ConfigError("history accepts only one repository. Specify exactly one -r.")
-        alias = repo_aliases[0] if repo_aliases else None
+        alias = _single_alias(repos, "history")
         if alias:
             if alias not in app.repositories:
                 raise ConfigError(f"Unknown repository alias: {alias}")
@@ -889,8 +892,8 @@ def cmd_history(args) -> int:
 
     events = EventLog(db_path).read(
         repo=filter_repo,
-        issue=getattr(args, "issue", None),
-        limit=args.limit,
+        issue=issue,
+        limit=limit,
     )
     if not events:
         print("No events")
@@ -903,6 +906,25 @@ def cmd_history(args) -> int:
             line = f"[{ev['repo']}] {line}"
         print(line)
     return 0
+
+
+@app.command("history")
+@repo_option
+@click.option("--issue", type=int, metavar="N", help="filter by Issue number")
+@click.option(
+    "--limit",
+    type=int,
+    default=50,
+    show_default=True,
+    metavar="N",
+    help="number of entries to show",
+)
+@click.pass_context
+def history_command(
+    ctx: click.Context, repos: tuple[str, ...], issue: int | None, limit: int
+) -> int:
+    """List the local SQLite event log chronologically."""
+    return show_history(ctx.obj["config_path"], repos, issue=issue, limit=limit)
 
 
 def build_parser() -> argparse.ArgumentParser:

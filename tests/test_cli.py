@@ -1500,9 +1500,9 @@ def test_cmd_history_output_and_filters(monkeypatch, tmp_path, capsys):
     app = _multi_app()
     for cfg in app.repositories.values():
         cfg.event_db = str(db)
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
 
-    rc = cli.cmd_history(argparse.Namespace(repos=None, config=None, issue=None, limit=50))
+    rc = cli.show_history(None, None, issue=None, limit=50)
     assert rc == 0
     out = capsys.readouterr().out.strip().splitlines()
     assert len(out) == 3
@@ -1512,7 +1512,7 @@ def test_cmd_history_output_and_filters(monkeypatch, tmp_path, capsys):
     assert "reviewed" in out[1]
 
     capsys.readouterr()
-    rc = cli.cmd_history(argparse.Namespace(repos=["a"], config=None, issue=1, limit=10))
+    rc = cli.show_history(None, ["a"], issue=1, limit=10)
     assert rc == 0
     filtered = capsys.readouterr().out.strip()
     assert filtered.startswith("2026-07-18T10:00:00+00:00")
@@ -1524,21 +1524,23 @@ def test_cmd_history_output_and_filters(monkeypatch, tmp_path, capsys):
 def test_cmd_history_missing_db_exit0(monkeypatch, tmp_path, capsys):
     app = _cfg()
     app.repositories["test"].event_db = str(tmp_path / "missing.db")
-    monkeypatch.setattr(cli, "_load", lambda _args: app)
+    monkeypatch.setattr(cli, "_load", lambda _config_path: app)
 
-    rc = cli.cmd_history(argparse.Namespace(repos=None, config=None, issue=None, limit=50))
+    rc = cli.show_history(None, None, issue=None, limit=50)
     assert rc == 0
     assert "No events" in capsys.readouterr().out
 
 
 def test_cmd_history_multiple_repos_exit2(monkeypatch):
-    monkeypatch.setattr(cli, "_load", lambda _args: _multi_app())
-    rc = cli.cmd_history(argparse.Namespace(repos=["a", "b"], config=None, issue=None, limit=50))
+    monkeypatch.setattr(cli, "_load", lambda _config_path: _multi_app())
+    rc = cli.show_history(None, ["a", "b"], issue=None, limit=50)
     assert rc == 2
 
 
 def test_history_help_shows_subcommand():
-    parser = cli.build_parser()
-    assert "history" in parser._subparsers._group_actions[0].choices
-    help_text = parser.format_help()
+    from click.testing import CliRunner
+
+    result = CliRunner().invoke(cli.app, ["--help"])
+    assert result.exit_code == 0
+    help_text = result.output
     assert "history" in help_text
