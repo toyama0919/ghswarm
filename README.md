@@ -368,6 +368,41 @@ Run `ghswarm --help` (or `ghswarm <command> --help`) for the full set of subcomm
 **Choosing a residency mode**: `loop -d` (daemon residency) and `loop --once` × cron are mutually exclusive. Use only one.
 Daemon logs accumulate one file per start date. Manage size at your discretion with `logrotate` or similar.
 
+## macOS tips
+
+**A locked screen or a running screensaver is not sleep.** While the display is on, macOS holds a
+`PreventUserIdleSystemSleep` assertion (`powerd`: "Prevent sleep while display is on"), so the machine stays fully
+awake and `loop` keeps processing Issues. A daemon started with `loop -d` is detached from your terminal and from
+the editor that launched it, so locking the screen or closing the window changes nothing.
+
+**Real system sleep does stop it.** Processes are suspended, and the periodic dark wakes that Power Nap triggers only
+resume maintenance tasks, so no cycle runs until the machine wakes for real. Nothing is lost -- state lives on GitHub,
+so the next cycle resumes from where it left off -- but the loop is idle for the whole sleep window.
+
+To keep the loop running after the display turns off, wrap it in `caffeinate`:
+
+```bash
+# A: run the loop in the foreground under caffeinate (e.g. inside tmux or screen)
+caffeinate -i -s ghswarm loop
+
+# B: daemonize as usual, then hold the assertion for the daemon's lifetime
+ghswarm loop -d
+nohup caffeinate -i -s -w "$(cat ~/.ghswarm/ghswarm.pid)" >/dev/null 2>&1 &
+```
+
+Note that `caffeinate ... ghswarm loop -d` does **not** work: `-d` double-forks and the foreground process exits
+immediately, so caffeinate drops its assertion right away. Wrap the loop while it stays in the foreground (A), or
+point caffeinate at the daemon's PID with `-w` (B). The PID file path comes from `daemon_pid`
+(default `~/.ghswarm/ghswarm.pid`).
+
+`-i` blocks idle sleep and `-s` blocks system sleep (AC power only; it has no effect on battery). Deliberately omit
+caffeinate's own `-d` flag: the display still sleeps and the screensaver and screen lock still work as usual, which is
+what you want for an unattended machine. An explicit sleep from the Apple menu cannot be blocked by any flag.
+
+To check what is actually happening, `pmset -g assertions` shows who is holding the machine awake, and comparing
+`pmset -g log | grep -E 'Entering Sleep|Wake'` against the daemon log timestamps tells you whether a quiet period was
+sleep or simply no work to pick up.
+
 ## Notes
 
 - Within the same repository, Issues are processed serially (one active at a time). Multiple repositories can run in parallel via `loop`.
