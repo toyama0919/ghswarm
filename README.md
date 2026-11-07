@@ -340,6 +340,7 @@ ghswarm reads verify steps from an HTML comment in the Issue body, separate from
 
 ```
 <!-- GHSWARM_VERIFY_START
+depends_on: [10, 12]
 verify:
   - uv run --extra dev ruff check .
   - uv run --extra dev python -m pytest -q
@@ -349,6 +350,12 @@ GHSWARM_VERIFY_END -->
 The `verify` schema matches the former spec frontmatter (legacy string/list form, or list of `{path, command}`).
 The **presence** of this block is the start gate (`spec_missing` if absent). An empty `verify:` inside still counts as spec'd.
 Malformed YAML blocks the Issue as `verify_invalid`.
+
+The optional `depends_on` key declares same-repository Issue numbers that must be completed first, for example
+`depends_on: [10, 12]`. A new Issue remains idle and is checked again on a later cycle until every dependency is closed
+(a closed Issue marked `not_planned` does not count). Waiting is logged but does not block or notify; `--force` bypasses
+this gate, while `--resume` does not. Invalid declarations—such as non-positive, self-referencing, missing, PR,
+`not_planned`, cyclic, or malformed dependencies—block the Issue with reason code `dependency_invalid`.
 
 ## Usage
 

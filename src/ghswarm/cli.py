@@ -28,6 +28,7 @@ from typing import Callable
 
 import click
 
+from . import deps
 from . import labels as lbl
 from . import state as st
 from . import activity
@@ -911,6 +912,7 @@ def _print_repo_status(cfg: RepoConfig) -> None:
             lock = f"{lock}(stale)"
         lock = lock or "-"
         status = ",".join(issue.status_labels) or "-"
+        dependency_text = _dependency_text(issue.body)
         ci = ""
         if state.next_action == "wait_ci" and state.pr_number:
             try:
@@ -920,8 +922,17 @@ def _print_repo_status(cfg: RepoConfig) -> None:
                 ci = f" pr#{state.pr_number}(?)"
         print(
             f"  #{issue.number:<4} [{status}] next={state.next_action:<20} "
-            f"tasks={done}/{total} lock={lock}{ci}  {issue.title}"
+            f"tasks={done}/{total} lock={lock}{ci}{dependency_text}  {issue.title}"
         )
+
+
+def _dependency_text(body: str) -> str:
+    """Format declared dependencies for status output without failing the report."""
+    try:
+        depends_on = deps.parse_depends_on(st.parse_verify_meta(body))
+    except (ConfigError, deps.DependsOnError):
+        return " deps=?"
+    return f" deps={','.join(f'#{number}' for number in depends_on)}" if depends_on else ""
 
 
 def show_status(config_path: str | None, repos: list[str] | tuple[str, ...] | None) -> int:

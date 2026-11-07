@@ -43,6 +43,8 @@ _TRANSIENT_RE = re.compile(
     r"|http 50\d",
     re.IGNORECASE,
 )
+# A private or otherwise invisible repository reports the same 404 as a missing Issue.
+_NOT_FOUND_RE = re.compile(r"HTTP 404|\bNot Found\b", re.IGNORECASE)
 # Number of extra attempts after the first one, and the base for exponential backoff.
 _RETRIES = 2
 _RETRY_BASE_SLEEP = 2.0
@@ -67,6 +69,16 @@ class Issue:
     @property
     def status_labels(self) -> list[str]:
         return [l for l in self.labels if l.startswith("status")]
+
+
+@dataclass
+class IssueRef:
+    """The small subset of an Issue needed for dependency resolution."""
+
+    state: str
+    state_reason: str | None
+    is_pull_request: bool
+    body: str
 
 
 # Classification of CI check conclusions
@@ -314,6 +326,24 @@ class GitHub:
             args += ["--milestone", str(milestone)]
         out = _run_gh(args, env=self.env)
         return [self._parse_issue(i) for i in json.loads(out)]
+
+    def issue_status(self, number: int) -> IssueRef:
+        """Fetch an Issue or PR's state and dependency metadata in one API call."""
+        try:
+            out = _run_gh(["api", f"repos/{self.repo}/issues/{number}"], env=self.env)
+        except GitHubError as exc:
+            # GitHub's REST API also returns 404 when the repository is not visible.
+            if _NOT_FOUND_RE.search(str(exc)):
+                return IssueRef("missing", None, False, "")
+            raise
+
+        data = json.loads(out)
+        return IssueRef(
+            state=(data.get("state") or "open").lower(),
+            state_reason=data.get("state_reason"),
+            is_pull_request="pull_request" in data,
+            body=data.get("body") or "",
+        )
 
     @staticmethod
     def _parse_issue(data: dict[str, Any]) -> Issue:

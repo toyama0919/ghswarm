@@ -53,6 +53,70 @@ def test_parse_issue_tolerates_null_body():
     assert GitHub._parse_issue(_payload(body=None)).body == ""
 
 
+# -- issue_status ----------------------------------------------------------
+
+
+def test_issue_status_reads_state_reason_and_body(monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_run_gh(args, **kwargs):
+        calls.append(args)
+        return json.dumps({"state": "OPEN", "state_reason": None, "body": "depends_on: []"})
+
+    monkeypatch.setattr(github, "_run_gh", fake_run_gh)
+    ref = GitHub("owner/repo").issue_status(12)
+    assert ref.state == "open"
+    assert ref.state_reason is None
+    assert ref.is_pull_request is False
+    assert ref.body == "depends_on: []"
+    assert calls == [["api", "repos/owner/repo/issues/12"]]
+
+
+def test_issue_status_reads_closed_not_planned(monkeypatch):
+    monkeypatch.setattr(
+        github,
+        "_run_gh",
+        lambda args, **kwargs: json.dumps(
+            {"state": "CLOSED", "state_reason": "not_planned", "body": "body"}
+        ),
+    )
+    ref = GitHub("owner/repo").issue_status(12)
+    assert ref.state == "closed"
+    assert ref.state_reason == "not_planned"
+
+
+def test_issue_status_treats_missing_state_reason_as_none(monkeypatch):
+    monkeypatch.setattr(
+        github,
+        "_run_gh",
+        lambda args, **kwargs: json.dumps({"state": "CLOSED", "body": "body"}),
+    )
+    assert GitHub("owner/repo").issue_status(12).state_reason is None
+
+
+def test_issue_status_detects_pull_request_from_response_shape(monkeypatch):
+    monkeypatch.setattr(
+        github,
+        "_run_gh",
+        lambda args, **kwargs: json.dumps(
+            {"state": "OPEN", "state_reason": None, "body": "body", "pull_request": {}}
+        ),
+    )
+    assert GitHub("owner/repo").issue_status(12).is_pull_request is True
+
+
+def test_issue_status_converts_not_found_to_missing(monkeypatch):
+    def fake_run_gh(args, **kwargs):
+        raise GitHubError("gh api failed (exit 1): HTTP 404: Not Found")
+
+    monkeypatch.setattr(github, "_run_gh", fake_run_gh)
+    ref = GitHub("owner/repo").issue_status(999)
+    assert ref.state == "missing"
+    assert ref.state_reason is None
+    assert ref.is_pull_request is False
+    assert ref.body == ""
+
+
 # -- _rollup ---------------------------------------------------------------
 
 

@@ -10,6 +10,7 @@ import pytest
 
 import ghswarm.cli as cli
 from ghswarm import activity
+from ghswarm import state as st
 from ghswarm.cli import (
     _build_issue_create_args,
     _filter_missing_paths,
@@ -1207,6 +1208,39 @@ def test_cmd_status_explicit_repo_not_filtered_by_missing_path(monkeypatch, tmp_
     rc = cli.show_status(None, ["b"])
     assert rc == 0
     assert calls == ["b"]
+
+
+def test_print_repo_status_shows_declared_dependencies(monkeypatch, capsys):
+    issue = _issue(11, "start")
+    issue.body += f"\n\n{st.VERIFY_START}\ndepends_on: [12, 10]\nverify: []\n{st.VERIFY_END}"
+    gh = FakeGitHub([issue])
+    monkeypatch.setattr(cli, "GitHub", lambda repo, env=None: gh)
+
+    cli._print_repo_status(_cfg().repositories["test"])
+
+    assert "deps=#10,#12" in capsys.readouterr().out
+
+
+def test_print_repo_status_omits_empty_dependencies(monkeypatch, capsys):
+    issue = _issue(11, "start")
+    issue.body += f"\n\n{st.VERIFY_START}\ndepends_on: []\nverify: []\n{st.VERIFY_END}"
+    gh = FakeGitHub([issue])
+    monkeypatch.setattr(cli, "GitHub", lambda repo, env=None: gh)
+
+    cli._print_repo_status(_cfg().repositories["test"])
+
+    assert " deps=" not in capsys.readouterr().out
+
+
+def test_print_repo_status_survives_dependency_parse_failure(monkeypatch, capsys):
+    issue = _issue(11, "start")
+    issue.body += f"\n\n{st.VERIFY_START}\nverify: [unclosed\n{st.VERIFY_END}"
+    gh = FakeGitHub([issue])
+    monkeypatch.setattr(cli, "GitHub", lambda repo, env=None: gh)
+
+    cli._print_repo_status(_cfg().repositories["test"])
+
+    assert " deps=?" in capsys.readouterr().out
 
 
 def test_build_issue_create_args_idle_only():
