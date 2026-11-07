@@ -108,6 +108,7 @@ The reason_codes that `orchestrator._enter_blocked()` / `_block_for_missing_spec
 | `pr_create_failed` | PR creation exception | Conditional | Check the branch, permissions, existing PR | None |
 | `spec_missing` | `🚫 **Cannot start**: no spec is set` | **Possible** (after adding GHSWARM_VERIFY) | Append a `GHSWARM_VERIFY` block to the Issue body, or re-file with ghswarm-spec | None |
 | `verify_invalid` | `🚫 **Cannot start**: invalid verify configuration` | **Possible** (after fixing YAML) | Fix the `GHSWARM_VERIFY` block YAML in the Issue body | None |
+| `dependency_invalid` | `🚫 **Cannot start**: invalid dependency configuration` | **Possible** (after fixing `depends_on`) | Fix the `depends_on` declaration in the Issue body, then return the Issue label to idle | None |
 
 ## Steps
 
