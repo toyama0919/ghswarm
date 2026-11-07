@@ -72,6 +72,7 @@ Draft the `spec` body in Markdown with the following structure. Don't make it ov
 
 ```markdown
 ---
+depends_on: [<existing issue number>, <another existing issue number>]
 verify:
   - <local verification command 1 for this task>
   - <verification command 2>
@@ -97,6 +98,9 @@ Why do this. The problem to solve.
 - Make tasks at a granularity of **1 task = roughly 1 commit**. ghswarm hands incomplete tasks
   to a single CLI run all at once, and has the agent produce a commit per task.
 - Including acceptance criteria or test commands in the tasks makes it easier for the implementation agent to verify.
+- **The front-matter `depends_on`** is optional and lists same-repository Issue numbers that must be completed first.
+  Every referenced Issue must already exist before this draft is filed. If a dependency has not been filed yet, use
+  `ghswarm-spec` to file it first, record its number, and only then file this dependent Issue.
 - **The front-matter `verify`**: the **local verification steps** (language-agnostic) ghswarm runs after each implement/review attempt, in order, stopping at the first failure. It accepts two shapes:
   - **Legacy form** (a single whole-repo target): a string, or a list of strings; a list wraps each element in a subshell and joins them with ` && ` (the string form is not wrapped).
   - **New form** (per-directory, for monorepos — e.g. a `terraform/` directory alongside a `backend/`): a list of `{path, command}` mappings, **both required on every entry**. Each becomes its own step, run in order in `<worktree>/<path>`. Its execution environment (local vs. Docker/image) is resolved from the target repo's config `verify:` registry by matching `path` exactly — **do not** write `sandbox` here, only in config. **Do not mix the legacy form and the new form** within the same `verify:`.
@@ -158,13 +162,17 @@ Once you have both human approval (step 2) and passing the independent review (s
 
      ```
      <!-- GHSWARM_VERIFY_START
+     depends_on: [10, 12]
      verify:
        - <command 1>
        - <command 2>
      GHSWARM_VERIFY_END -->
      ```
 
-     The `verify` schema is unchanged (legacy string/list form, or list of `{path, command}`). **Verify command strings must not contain `-->` or `GHSWARM_VERIFY_END`** (HTML comment constraints). An empty `verify:` still counts as spec'd (local verification skipped).
+   The `depends_on` value is copied from the draft front matter when present. It may contain only Issue numbers that
+   already exist in this repository. The `verify` schema is unchanged (legacy string/list form, or list of `{path, command}`).
+   **Verify command strings must not contain `-->` or `GHSWARM_VERIFY_END`** (HTML comment constraints). An empty
+   `verify:` still counts as spec'd (local verification skipped).
 
    - Recommended body order: prose + task checklist → `GHSWARM_VERIFY` → `GHSWARM_STATE` (ghswarm always appends state last).
 
