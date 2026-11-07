@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import deps
 from . import labels as lbl
 from . import questions as q
 from . import state as st
@@ -198,6 +199,11 @@ class Orchestrator:
             )
             return StepResult(number, "blocked", "budget_exhausted")
 
+        if state.next_action == "start" and not force:
+            dependency_result = self._dependency_gate(issue, state, resume=resume)
+            if dependency_result is not None:
+                return dependency_result
+
         # Normalize the next action.
         action = state.next_action
         if action in ("start", "wait_for_clarification"):
@@ -220,6 +226,84 @@ class Orchestrator:
         if action == "done":
             return StepResult(number, "skipped", "already completed")
         return StepResult(number, "skipped", f"unknown next_action: {action}")
+
+    def _dependency_gate(
+        self, issue: Issue, state: st.IssueState, *, resume: bool
+    ) -> StepResult | None:
+        """Gate a never-started Issue on its direct Issue dependencies."""
+        try:
+            meta = st.parse_verify_meta(issue.body)
+        except ConfigError:
+            # Let _implement resolve the malformed YAML through the existing
+            # verify_invalid path, rather than changing that reason code.
+            return None
+
+        try:
+            direct = deps.parse_depends_on(meta)
+        except deps.DependsOnError as exc:
+            return self._block_for_invalid_dependency(issue, state, str(exc))
+        if not direct:
+            return None
+
+        try:
+            verdict = deps.resolve(issue.number, direct, self._dependency_node)
+        except GitHubError as exc:
+            return StepResult(issue.number, "skipped", f"dependency check failed: {exc}")
+
+        if verdict.kind == "waiting":
+            waiting = ", ".join(f"#{n}" for n in verdict.waiting_on)
+            detail = f"waiting for {waiting}"
+            log.info("Issue #%s: %s", issue.number, detail)
+            if self.dry_run:
+                return StepResult(issue.number, "skipped", f"[dry-run] {detail}")
+            if resume:
+                # A resumed Issue may still carry the blocked label from an earlier
+                # dependency result. Persist first, then release the label to idle.
+                self._persist(issue, state)
+                self._release_idle(issue, state)
+            return StepResult(issue.number, "skipped", detail)
+
+        if verdict.kind == "invalid":
+            return self._block_for_invalid_dependency(issue, state, verdict.detail)
+        return None
+
+    def _dependency_node(self, number: int) -> deps.DepNode:
+        """Convert the GitHub dependency reference into the resolver's pure node."""
+        ref = self.gh.issue_status(number)
+        if ref.state == "missing":
+            return deps.DepNode("missing", [])
+        if ref.is_pull_request:
+            return deps.DepNode("pull_request", [])
+        if ref.state == "closed":
+            reason = (ref.state_reason or "").lower().replace(" ", "_")
+            if reason == "not_planned":
+                return deps.DepNode("not_planned", [])
+            return deps.DepNode("closed", [])
+        if ref.state != "open":
+            return deps.DepNode("unparsable", [])
+
+        try:
+            meta = st.parse_verify_meta(ref.body)
+            direct = deps.parse_depends_on(meta)
+        except (ConfigError, deps.DependsOnError):
+            return deps.DepNode("unparsable", [])
+        return deps.DepNode("open", direct)
+
+    def _block_for_invalid_dependency(
+        self, issue: Issue, state: st.IssueState, detail: str
+    ) -> StepResult:
+        """Block and notify for malformed or impossible direct dependencies."""
+        if self.dry_run:
+            return StepResult(issue.number, "skipped", f"[dry-run] dependency_invalid: {detail}")
+        self.gh.comment(
+            issue.number,
+            "🚫 **Cannot start**: invalid dependency configuration\n\n"
+            f"The Issue's `depends_on` declaration cannot be resolved:\n\n"
+            f"```\n{detail}\n```\n\n"
+            "Fix the dependency declaration, then resume.",
+        )
+        self._enter_blocked(issue, state, "dependency_invalid", detail)
+        return StepResult(issue.number, "blocked", "dependency_invalid")
 
     # -- implement phase ---------------------------------------------------
     def _implement(self, issue: Issue, state: st.IssueState, *, resume: bool) -> StepResult:
