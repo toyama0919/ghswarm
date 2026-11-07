@@ -159,6 +159,20 @@ def test_invalid_dependency_blocks_comments_and_notifies(monkeypatch):
     assert notifier.blocked_calls[0][0] == "dependency_invalid"
 
 
+def test_null_dependency_is_invalid(monkeypatch):
+    gh = FakeGitHub(
+        _body(_state(), verify="depends_on: null\nverify: []"),
+        labels=["status: idle"],
+    )
+    orch, notifier = _orch(monkeypatch, gh)
+
+    result = orch.process(11)
+
+    assert result.action == "blocked"
+    assert result.detail == "dependency_invalid"
+    assert notifier.blocked_calls[0][0] == "dependency_invalid"
+
+
 def test_broken_verify_yaml_still_uses_verify_invalid(monkeypatch):
     gh = FakeGitHub(
         _body(_state(), verify="depends_on: [10\nverify: []", with_task=True),

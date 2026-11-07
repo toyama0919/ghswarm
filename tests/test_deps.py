@@ -7,9 +7,8 @@ import pytest
 from ghswarm.deps import DepNode, DependsOnError, parse_depends_on, resolve
 
 
-def test_parse_depends_on_missing_null_and_empty_values():
+def test_parse_depends_on_missing_and_empty_values():
     assert parse_depends_on({}) == []
-    assert parse_depends_on({"depends_on": None}) == []
     assert parse_depends_on({"depends_on": []}) == []
 
 
@@ -23,6 +22,7 @@ def test_parse_depends_on_valid_values_are_deduplicated_and_sorted():
         10,
         "10",
         "owner/repo#12",
+        None,
         [True],
         [0],
         [-1],
@@ -116,9 +116,9 @@ def test_resolve_ignores_invalid_nodes_found_only_transitively():
     assert verdict.waiting_on == [10]
 
 
-def test_resolve_rejects_graphs_larger_than_50_nodes():
+def test_resolve_waits_for_a_valid_graph_larger_than_50_nodes():
     nodes = {number: DepNode("open", [number + 1]) for number in range(1, 52)}
     nodes[52] = DepNode("closed", [])
     verdict = resolve(999, [1], _resolver(nodes))
-    assert verdict.kind == "invalid"
-    assert verdict.detail == "dependency graph too large (>50 nodes)"
+    assert verdict.kind == "waiting"
+    assert verdict.waiting_on == [1]
