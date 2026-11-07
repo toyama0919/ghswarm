@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Literal
+
+
+_INVALID_DEPENDENCY_STATUSES = frozenset({"missing", "pull_request", "not_planned", "unparsable"})
+_MAX_GRAPH_NODES = 50
+_INVALID_DEPENDS_ON = "depends_on must be a list of positive Issue numbers"
+_GRAPH_TOO_LARGE = f"dependency graph too large (>{_MAX_GRAPH_NODES} nodes)"
+
+DependencyStatus = Literal["closed", "missing", "open", "pull_request", "not_planned", "unparsable"]
+VerdictKind = Literal["invalid", "waiting", "ready"]
 
 
 class DependsOnError(ValueError):
@@ -14,7 +23,7 @@ class DependsOnError(ValueError):
 class DepNode:
     """The dependency metadata needed to inspect one Issue."""
 
-    status: str
+    status: DependencyStatus
     depends_on: list[int]
 
 
@@ -22,7 +31,7 @@ class DepNode:
 class Verdict:
     """The result of resolving an Issue's direct dependencies."""
 
-    kind: str
+    kind: VerdictKind
     waiting_on: list[int]
     detail: str
 
@@ -38,12 +47,12 @@ def parse_depends_on(meta: dict) -> list[int]:
     if value is None:
         return []
     if not isinstance(value, list):
-        raise DependsOnError("depends_on must be a list of positive Issue numbers")
+        raise DependsOnError(_INVALID_DEPENDS_ON)
 
     numbers: set[int] = set()
     for item in value:
         if isinstance(item, bool) or not isinstance(item, int) or item <= 0:
-            raise DependsOnError("depends_on must be a list of positive Issue numbers")
+            raise DependsOnError(_INVALID_DEPENDS_ON)
         numbers.add(item)
     return sorted(numbers)
 
@@ -66,7 +75,7 @@ def resolve(number: int, direct: list[int], fetch: Callable[[int], DepNode]) -> 
         if dep_number in nodes:
             return nodes[dep_number]
         fetched_count += 1
-        if fetched_count > 50:
+        if fetched_count > _MAX_GRAPH_NODES:
             return None
         node = fetch(dep_number)
         nodes[dep_number] = node
@@ -102,8 +111,8 @@ def resolve(number: int, direct: list[int], fetch: Callable[[int], DepNode]) -> 
 
         node = get_node(dep_number)
         if node is None:
-            return Verdict("invalid", [], "dependency graph too large (>50 nodes)")
-        if node.status in {"missing", "pull_request", "not_planned", "unparsable"}:
+            return Verdict("invalid", [], _GRAPH_TOO_LARGE)
+        if node.status in _INVALID_DEPENDENCY_STATUSES:
             return Verdict("invalid", [], f"dependency #{dep_number} is {node.status}")
         if node.status == "open":
             waiting_on.append(dep_number)
@@ -111,7 +120,7 @@ def resolve(number: int, direct: list[int], fetch: Callable[[int], DepNode]) -> 
     for dep_number in waiting_on:
         error = walk(dep_number)
         if error == "too_large":
-            return Verdict("invalid", [], "dependency graph too large (>50 nodes)")
+            return Verdict("invalid", [], _GRAPH_TOO_LARGE)
         if error == "cycle":
             return Verdict("invalid", [], f"dependency cycle involving #{dep_number}")
 

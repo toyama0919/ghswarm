@@ -232,14 +232,12 @@ class Orchestrator:
     ) -> StepResult | None:
         """Gate a never-started Issue on its direct Issue dependencies."""
         try:
-            meta = st.parse_verify_meta(issue.body)
+            direct = _parse_dependencies(issue.body)
         except ConfigError:
             # Let _implement resolve the malformed YAML through the existing
             # verify_invalid path, rather than changing that reason code.
             return None
 
-        try:
-            direct = deps.parse_depends_on(meta)
         except deps.DependsOnError as exc:
             return self._block_for_invalid_dependency(issue, state, str(exc))
         if not direct:
@@ -283,8 +281,7 @@ class Orchestrator:
             return deps.DepNode("unparsable", [])
 
         try:
-            meta = st.parse_verify_meta(ref.body)
-            direct = deps.parse_depends_on(meta)
+            direct = _parse_dependencies(ref.body)
         except (ConfigError, deps.DependsOnError):
             return deps.DepNode("unparsable", [])
         return deps.DepNode("open", direct)
@@ -1341,6 +1338,11 @@ def _parse_ts(s: str) -> datetime | None:
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _parse_dependencies(body: str) -> list[int]:
+    """Parse dependency numbers from an Issue's GHSWARM_VERIFY metadata."""
+    return deps.parse_depends_on(st.parse_verify_meta(body))
 
 
 def _is_actionable(item: ReviewItem) -> bool:
